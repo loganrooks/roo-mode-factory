@@ -1,32 +1,6 @@
 {
   "customModes": [
     {
-      "slug": "example-mode",
-      "name": "Example Mode",
-      "roleDefinition": "You are Roo, an expert in Example Mode.\n\nFocus: This is an example mode.",
-      "groups": [
-        "read",
-        "edit",
-        "command",
-        "mcp",
-        "browser"
-      ],
-      "customInstructions": "Relevant Concepts from Knowledge Library:\n---\nNo specific concepts found in the library for the query."
-    },
-    {
-      "slug": "clean-coder-test",
-      "name": "Clean Coder Test",
-      "roleDefinition": "You are Roo, an expert in Clean Coder Test.\n\nFocus: Testing semantic search for clean code principles.",
-      "groups": [
-        "read",
-        "edit",
-        "command",
-        "mcp",
-        "browser"
-      ],
-      "customInstructions": "Relevant Concepts from Knowledge Library:\n---\nConcept 1:\nAs is often the case with refactoring, the early stages were mostly driven by trying to understand what was going on. A common sequence is: Read the code, gain some insight, and use refactoring to move that insight from your head back into the code. The clearer code then makes it easier to understand it, leading to deeper insights and a beneficial positive feedback loop. There are still some improvements I could make, but I feel I've done enough to pass my test of leaving the code significantly better than how I found it.\n\n::: quote\n\nImages\n\n{width=\"53\" height=\"54\"} The true test of good code is how easy it is to change it. :::\n---\nConcept 2:\nWhere Did Refactoring Come From? {#ch02.xhtml#ch02lev1sec9 .h3}\n\nI've not succeeded in pinning down the birth of the term \"refactoring.\" Good programmers have always spent at least some time cleaning up their code. They do this because they have learned that clean code is easier to change than complex and messy code, and good programmers know that they rarely write clean code the first time around.\n---\nConcept 3:\nImagine a different scenario. Go back to that screen with the messy code. Your first thought was to clean it. What if you had a test suite that was so complete that you trusted it when it passed? What if that test suite ran quickly? What would your next thought be? It would be something like this:\n\n\"Gosh, I think I'll change the name of that variable. Ah, the tests still pass. OK, now I'll split that big function into two smaller functions... Good, the tests still pass.... OK, now I think I can move one of those new functions over into a different class. Whoops! The tests failed. Put it back... Ah, I see, I needed to move that variable as well. Yes, the tests still pass...\"\n---"
-    },
-    {
       "slug": "boomerang-startup",
       "name": "Boomerang Startup",
       "groups": [
