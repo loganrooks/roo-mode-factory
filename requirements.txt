@@ -1,5 +1,8 @@
 chromadb
 langchain
+langchain-community
 sentence-transformers
 unstructured # Required by UnstructuredMarkdownLoader
 markdown # Required by UnstructuredMarkdownLoader
+google-generativeai
+python-dotenv

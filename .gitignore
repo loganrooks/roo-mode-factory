@@ -15,6 +15,9 @@ env/
 ENV/
 
 # Database persistence
+
+# Environment variables
+.env
 chroma_db/
 
 # IDE / Editor specific

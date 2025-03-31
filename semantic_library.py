@@ -1,42 +1,108 @@
 import os
 import chromadb
-from chromadb.utils import embedding_functions
-from langchain.document_loaders import DirectoryLoader, UnstructuredMarkdownLoader
+import google.generativeai as genai
+from chromadb.utils import embedding_functions as chroma_ef
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+from langchain_community.document_loaders import DirectoryLoader, UnstructuredMarkdownLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer # Explicit import for clarity, though Chroma uses it internally
+from dotenv import load_dotenv
+from typing import List, Optional, Literal
 
 # --- Constants ---
 LIBRARY_PATH = "./library"
 PERSIST_DIRECTORY = "./chroma_db"
 COLLECTION_NAME = "semantic_library_collection"
-EMBEDDING_MODEL_NAME = "all-mpnet-base-v2"
+# Embedding Model Configuration
+DEFAULT_EMBEDDING_PROVIDER: Literal['local', 'gemini'] = os.getenv('EMBEDDING_PROVIDER', 'local').lower() # Default to local
+LOCAL_EMBEDDING_MODEL = "all-mpnet-base-v2"
+GEMINI_EMBEDDING_MODEL = "models/embedding-001" # Or other suitable Gemini embedding model
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 150
 SEARCH_RESULTS_COUNT = 5
 
-# --- Embedding Function ---
-# Using Chroma's utility, but could also instantiate SentenceTransformer directly
-# This ensures consistency between ingestion and search query embedding
-sentence_transformer_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name=EMBEDDING_MODEL_NAME
-)
+# --- Environment Variables & API Keys ---
+load_dotenv() # Load variables from .env file
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+# --- Embedding Functions ---
+
+# Local Sentence Transformer (using Chroma's utility)
+def get_local_embedding_function(model_name: str = LOCAL_EMBEDDING_MODEL) -> chroma_ef.SentenceTransformerEmbeddingFunction:
+    print(f"Using Local Sentence Transformer: {model_name}")
+    return chroma_ef.SentenceTransformerEmbeddingFunction(model_name=model_name)
+
+# Google Gemini Embedding Function (Custom Class for ChromaDB)
+class GeminiEmbeddingFunction(EmbeddingFunction):
+    """Custom embedding function using Google Gemini."""
+    def __init__(self, api_key: str, model_name: str = GEMINI_EMBEDDING_MODEL, task_type: str = "retrieval_document"):
+        if not api_key:
+            raise ValueError("Google API Key not provided. Set GOOGLE_API_KEY environment variable.")
+        genai.configure(api_key=api_key)
+        self._model_name = model_name
+        self._task_type = task_type
+        print(f"Using Google Gemini Embedding: {model_name} (Task Type: {task_type})")
+
+    def __call__(self, input: Documents) -> Embeddings:
+        try:
+            # Note: Gemini API might have batch size limits, handle if necessary
+            # For simplicity, embedding one by one here, but batching is preferred for large scale
+            embeddings = genai.embed_content(
+                model=self._model_name,
+                content=input,
+                task_type=self._task_type
+            )
+            return embeddings['embedding']
+        except Exception as e:
+            print(f"Error generating Gemini embeddings: {e}")
+            # Return empty list or handle error appropriately
+            # Returning empty list might cause issues downstream in ChromaDB add/query
+            # Consider returning list of None or zero vectors of correct dimensionality if known
+            # For now, re-raising might be safer to halt the process
+            raise RuntimeError(f"Failed to get embeddings from Gemini: {e}") from e
+
+def get_gemini_embedding_function(api_key: str = GOOGLE_API_KEY, model_name: str = GEMINI_EMBEDDING_MODEL) -> Optional[GeminiEmbeddingFunction]:
+    if not api_key:
+        print("Warning: GOOGLE_API_KEY not found in environment. Cannot use Gemini embeddings.")
+        return None
+    return GeminiEmbeddingFunction(api_key=api_key, model_name=model_name)
+
+# --- Function to select Embedding Function based on provider ---
+def get_embedding_function(provider: Literal['local', 'gemini'] = DEFAULT_EMBEDDING_PROVIDER) -> EmbeddingFunction:
+    if provider == 'gemini':
+        gemini_ef = get_gemini_embedding_function()
+        if gemini_ef:
+            return gemini_ef
+        else:
+            print("Falling back to local embedding function due to missing Gemini API key.")
+            # Fallback to local if Gemini setup fails
+            return get_local_embedding_function()
+    elif provider == 'local':
+        return get_local_embedding_function()
+    else:
+        print(f"Warning: Unknown embedding provider '{provider}'. Defaulting to local.")
+        return get_local_embedding_function()
 
 # --- Core Functions ---
 
 def initialize_db(persist_directory: str = PERSIST_DIRECTORY,
                   collection_name: str = COLLECTION_NAME,
-                  embedding_function = sentence_transformer_ef) -> chromadb.Collection:
+                  embedding_function: EmbeddingFunction = None) -> chromadb.Collection:
     """
     Initializes a persistent ChromaDB client and gets/creates a collection.
 
     Args:
         persist_directory: Path to store the database files.
         collection_name: Name of the collection to use.
-        embedding_function: The embedding function for the collection.
+        embedding_function: The embedding function instance to use. If None, determined by EMBEDDING_PROVIDER env var.
 
     Returns:
         The ChromaDB collection object.
     """
+    # Determine embedding function if not provided
+    if embedding_function is None:
+        embedding_function = get_embedding_function() # Uses default provider from env or 'local'
+
     print(f"Initializing ChromaDB client at: {persist_directory}")
     client = chromadb.PersistentClient(path=persist_directory)
 
@@ -171,13 +237,31 @@ def search_library(collection: chromadb.Collection,
 # --- Example Usage ---
 if __name__ == "__main__":
     print("Semantic Library Script")
+    print(f"Selected Embedding Provider: {DEFAULT_EMBEDDING_PROVIDER}")
+    if DEFAULT_EMBEDDING_PROVIDER == 'gemini' and not GOOGLE_API_KEY:
+        print("\n*** WARNING: EMBEDDING_PROVIDER is 'gemini' but GOOGLE_API_KEY is not set in .env! ***")
+        print("*** Script will likely fail or fall back to local embeddings if possible. ***\n")
 
-    # 1. Initialize Database
-    db_collection = initialize_db()
+    # 1. Initialize Database (embedding function determined by env var)
+    # The get_embedding_function handles selection and potential fallback
+    selected_ef = get_embedding_function(DEFAULT_EMBEDDING_PROVIDER)
+    db_collection = initialize_db(embedding_function=selected_ef)
+
+    # --- Optional: Command Line Arguments for Actions ---
+    # Example: python semantic_library.py --action ingest
+    # Example: python semantic_library.py --action search --query "your query"
+    # For simplicity, keeping the original flow for now.
 
     # 2. Ingest Documents (run this to populate/update the DB)
-    # Comment out if you only want to search an existing DB
-    ingest_documents(db_collection)
+    # Consider adding a check or argument to skip ingestion if DB already exists/populated
+    print("\n--- Ingestion Phase ---")
+    # Check if collection exists and has items - rudimentary check
+    if db_collection.count() == 0:
+         print("Collection is empty. Running ingestion...")
+         ingest_documents(db_collection)
+    else:
+         print(f"Collection '{db_collection.name}' already contains {db_collection.count()} items. Skipping ingestion.")
+         print("To re-ingest, delete the './chroma_db' directory or modify this script.")
 
     # 3. Perform a Search
     print("\n--- Example Search ---")
