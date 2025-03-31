@@ -11,7 +11,7 @@ from typing import List, Optional, Literal
 
 # --- Constants ---
 LIBRARY_PATH = "./library"
-PERSIST_DIRECTORY = "./chroma_db"
+# PERSIST_DIRECTORY = "./chroma_db" # Made dynamic based on provider
 COLLECTION_NAME = "semantic_library_collection"
 # Embedding Model Configuration
 DEFAULT_EMBEDDING_PROVIDER: Literal['local', 'gemini'] = os.getenv('EMBEDDING_PROVIDER', 'local').lower() # Default to local
@@ -83,9 +83,14 @@ def get_embedding_function(provider: Literal['local', 'gemini'] = DEFAULT_EMBEDD
         print(f"Warning: Unknown embedding provider '{provider}'. Defaulting to local.")
         return get_local_embedding_function()
 
+# --- Helper Function for Directory ---
+def get_persist_directory(provider: Literal['local', 'gemini']) -> str:
+    """Returns the persistence directory path based on the provider."""
+    return f"./chroma_db_{provider}"
+
 # --- Core Functions ---
 
-def initialize_db(persist_directory: str = PERSIST_DIRECTORY,
+def initialize_db(persist_directory: str, # Now required
                   collection_name: str = COLLECTION_NAME,
                   embedding_function: EmbeddingFunction = None) -> chromadb.Collection:
     """
@@ -94,7 +99,7 @@ def initialize_db(persist_directory: str = PERSIST_DIRECTORY,
     Args:
         persist_directory: Path to store the database files.
         collection_name: Name of the collection to use.
-        embedding_function: The embedding function instance to use. If None, determined by EMBEDDING_PROVIDER env var.
+        embedding_function: The embedding function instance to use. If None, determined by EMBEDDING_PROVIDER env var (used to select default).
 
     Returns:
         The ChromaDB collection object.
@@ -242,26 +247,31 @@ if __name__ == "__main__":
         print("\n*** WARNING: EMBEDDING_PROVIDER is 'gemini' but GOOGLE_API_KEY is not set in .env! ***")
         print("*** Script will likely fail or fall back to local embeddings if possible. ***\n")
 
-    # 1. Initialize Database (embedding function determined by env var)
-    # The get_embedding_function handles selection and potential fallback
+    # 1. Determine Paths and Functions based on Provider
+    persist_dir = get_persist_directory(DEFAULT_EMBEDDING_PROVIDER)
     selected_ef = get_embedding_function(DEFAULT_EMBEDDING_PROVIDER)
-    db_collection = initialize_db(embedding_function=selected_ef)
+
+    # 2. Initialize Database
+    db_collection = initialize_db(
+        persist_directory=persist_dir,
+        embedding_function=selected_ef
+    )
 
     # --- Optional: Command Line Arguments for Actions ---
     # Example: python semantic_library.py --action ingest
     # Example: python semantic_library.py --action search --query "your query"
     # For simplicity, keeping the original flow for now.
 
-    # 2. Ingest Documents (run this to populate/update the DB)
+    # 3. Ingest Documents (run this to populate/update the DB)
     # Consider adding a check or argument to skip ingestion if DB already exists/populated
     print("\n--- Ingestion Phase ---")
     # Check if collection exists and has items - rudimentary check
     if db_collection.count() == 0:
-         print("Collection is empty. Running ingestion...")
+         print(f"Collection is empty in '{persist_dir}'. Running ingestion...")
          ingest_documents(db_collection)
     else:
-         print(f"Collection '{db_collection.name}' already contains {db_collection.count()} items. Skipping ingestion.")
-         print("To re-ingest, delete the './chroma_db' directory or modify this script.")
+         print(f"Collection '{db_collection.name}' in '{persist_dir}' already contains {db_collection.count()} items. Skipping ingestion.")
+         print(f"To re-ingest, delete the '{persist_dir}' directory or modify this script.")
 
     # 3. Perform a Search
     print("\n--- Example Search ---")
