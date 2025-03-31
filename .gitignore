@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*build*/
+*dist*/
+*.egg-info/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Database persistence
+chroma_db/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp
+*.swo

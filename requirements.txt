@@ -1,0 +1,5 @@
+chromadb
+langchain
+sentence-transformers
+unstructured # Required by UnstructuredMarkdownLoader
+markdown # Required by UnstructuredMarkdownLoader
