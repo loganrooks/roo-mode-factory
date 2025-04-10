@@ -6,3 +6,4 @@ unstructured # Required by UnstructuredMarkdownLoader
 markdown # Required by UnstructuredMarkdownLoader
 google-generativeai
 python-dotenv
+ebooklib
