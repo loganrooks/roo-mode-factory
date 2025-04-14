@@ -14,22 +14,22 @@ memory_bank_strategy:
   if_memory_bank_exists: |
       1. Read Global & Active Files: `memory-bank/activeContext.md`, `memory-bank/globalContext.md` (WAIT after each)
       2. Read Mode-Specific & Feedback: `memory-bank/mode-specific/qa-tester.md`, `memory-bank/feedback/qa-tester-feedback.md` (WAIT after each, if exists)
-      3. Activation: Set status '[MEMORY BANK: ACTIVE]', inform user, apply feedback.
+      3. Activation: Set status '[MEMORY BANK: ACTIVE]', inform user, apply feedback. **Verify reverse chronological order of logs.**
   general:
     status_prefix: "Begin EVERY response with either '[MEMORY BANK: ACTIVE]' or '[MEMORY BANK: INACTIVE]', according to the current state of the Memory Bank."
 
 memory_bank_updates:
   frequency: |
       UPDATE MEMORY BANK AT THESE POINTS:
-      1. At the beginning of each task (read)
-      2. Before calling attempt_completion (write)
+      1. At the beginning of each task (read - use partial reads if needed)
+      2. **Before calling attempt_completion (perform pre-completion checks, then write using batch operations)**
       3. When significant new information is discovered or decisions are made (e.g., new test plan, major bug found)
       4. On explicit "Update Memory Bank" or "UMB" command
   update_process: |
-      1. For all updates: Include timestamp, descriptive titles, maintain structure, use insert_content/apply_diff appropriately, avoid overwriting logs, keep concise.
-      2. File-Specific Updates: Update `activeContext.md` and relevant sections in `globalContext.md`. Update `memory-bank/mode-specific/qa-tester.md` under appropriate headers. Cross-reference if needed.
+      1. For all updates: Include timestamp, descriptive titles, maintain structure. **ALWAYS add new entries to the TOP (reverse chronological order).** Use insert_content/apply_diff appropriately (prefer batching). Avoid overwriting logs, keep concise. Minimize API calls. **Actively cross-reference related entries (e.g., link bug reports to test plans/results, link coverage analysis to plans).**
+      2. File-Specific Updates: Update `activeContext.md` (using standard format) and relevant sections in `globalContext.md`. Update `memory-bank/mode-specific/qa-tester.md` under appropriate headers (**newest first**). Cross-reference if needed.
   feedback_handling: |
-      Save feedback to `memory-bank/feedback/qa-tester-feedback.md`, document source/issue/action, apply learnings.
+      Save feedback to `memory-bank/feedback/qa-tester-feedback.md` (**newest first**), document source/issue/action, apply learnings. **Explicitly log user interventions and significant deviations during QA.**
 
   # QA Tester-specific update details
   primary_responsibilities: |
@@ -44,32 +44,33 @@ memory_bank_updates:
     - After identifying and documenting a new bug
     - After completing an exploratory testing session
     - When analyzing test coverage
-    - Before calling attempt_completion
+    - **Before calling attempt_completion (perform pre-completion checks: report completeness, MB update).**
   core_file_updates:
     activeContext.md: |
-      - Update with current QA focus (e.g., "Executing E2E tests for feature X", "Planning UAT for Y", "Investigating bug Z"), blockers, coverage gaps.
+      - **Add entries to the TOP.** Format: `[YYYY-MM-DD HH:MM:SS] - QATester - [Action/Status] - [Details, e.g., Executing E2E tests for feature X, Planning UAT for Y, Investigating bug Z, blockers, coverage gaps]`
     globalContext.md: |
-      - Update `# Progress` section with summaries of test execution results, bug counts/status, coverage metrics.
-      - Update `# Decision Log` section with significant QA strategy decisions or tooling choices.
+      - Update `# Progress` section (**newest first**) with summaries of test execution results, bug counts/status, coverage metrics.
+      - Update `# Decision Log` section (**newest first**) with significant QA strategy decisions or tooling choices.
   mode_specific_updates:
     target_file: memory-bank/mode-specific/qa-tester.md
     structure: |
       # QA Tester Specific Memory
+      <!-- Entries below should be added reverse chronologically (newest first) -->
 
-      ## Test Plans
-      <!-- Append new test plans (E2E, UAT, Integration, Exploratory) using the format below -->
-
-      ## Test Execution Results
-      <!-- Append summaries of test runs using the format below -->
-
-      ## Bug Reports Log
-      <!-- Append new bug reports using the format below -->
+      ## Exploratory Testing Log
+      <!-- Append notes from exploratory sessions using the format below -->
 
       ## Test Coverage Analysis
       <!-- Append coverage analysis notes using the format below -->
 
-      ## Exploratory Testing Log
-      <!-- Append notes from exploratory sessions using the format below -->
+      ## Bug Reports Log
+      <!-- Append new bug reports using the format below -->
+
+      ## Test Execution Results
+      <!-- Append summaries of test runs using the format below -->
+
+      ## Test Plans
+      <!-- Append new test plans (E2E, UAT, Integration, Exploratory) using the format below -->
     test_plans_format: |
       ### Test Plan: [Plan Type - e.g., E2E, UAT] - [Feature/Area] - [YYYY-MM-DD HH:MM:SS]
       - **Objective**: [Goal of the test plan]
@@ -113,5 +114,5 @@ umb:
   instructions: |
       1. Halt Current Task. Acknowledge Command: '[MEMORY BANK: UPDATING]'. Review Chat History.
       2. Temporary God-Mode Activation.
-      3. Core Update Process: Update `activeContext.md` and `globalContext.md`. Update `memory-bank/mode-specific/qa-tester.md` under relevant headers. Update feedback file. Ensure consistency.
+      3. Core Update Process: Update `activeContext.md` and `globalContext.md`. Update `memory-bank/mode-specific/qa-tester.md` under relevant headers (**newest first**). Update feedback file (**newest first**). Ensure consistency. **Use batch operations.**
       4. Confirm Completion: '[MEMORY BANK: UPDATED]'.
