@@ -74,3 +74,42 @@
     - Updated the `argparse` section in the `if __name__ == '__main__':` block to accept and use `output_path`.
 - **Challenge**: The `apply_diff` tool initially reported partial failure, but a subsequent `read_file` confirmed all changes were actually applied correctly. This required an extra verification step.
 - **Learning**: Double-check file state with `read_file` if `apply_diff` reports issues, as the report might not always be accurate.
+
+
+## Feedback: Implement `acquire_epub.py` - [2025-04-10 18:45:17]
+- **Task**: Implement `pipelines/acquire_epub.py` for Zlibrary search/download based on ADR-001.
+- **Challenge**: Uncertainty regarding the exact API and package name of the `sertraline/zlibrary` library (assumed PyPI name `sertraline-zlib`). Specific unknowns include:
+    - Login mechanism (explicit method vs. automatic on first request).
+    - Method for obtaining the final download URL post-selection (part of search results vs. separate API call).
+    - Availability of a high-level library download method vs. requiring manual download via HTTP client.
+- **Decision**: 
+    - Implemented the script assuming the package name `sertraline-zlib`.
+    - Assumed login is handled implicitly by the library when using the shared `aiohttp.ClientSession`.
+    - Implemented manual download logic using `aiohttp` and the shared session, assuming the download URL needs to be retrieved (added placeholders for different retrieval methods based on library structure).
+
+## Feedback: Correction on `acquire_epub.py` Implementation - [2025-04-10 18:51:00]
+- **Source**: User Feedback on initial `attempt_completion`.
+- **Issue**: Initial implementation of `acquire_epub.py` made incorrect assumptions about the `sertraline/zlibrary` library (package name, import, login, search syntax, download URL retrieval) instead of verifying details first.
+- **Action Taken**: 
+    1. Acknowledged the error.
+    2. Used `brave_web_search` to find the library's GitHub repository and PyPI page.
+    3. Used `fetch_url` to retrieve and analyze the `README.md` from GitHub.
+    4. Identified correct usage: package `zlibrary`, import `zlibrary`, class `AsyncZlib`, explicit `await lib.login()`, specific search filter syntax (`zlibrary.Extension`), fetching details for download URL (`await item.fetch()`).
+    5. Corrected `requirements.txt` (`zlibrary` instead of `sertraline-zlib`).
+    6. Rewrote `pipelines/acquire_epub.py` using the verified methods and syntax.
+    7. Enabled library debug logging as per README.
+- **Learning**: Making assumptions about external libraries, especially unofficial ones, is unreliable and leads to errors. Always verify package names, installation methods, imports, and API usage through official documentation (README, PyPI) or source code inspection *before* implementation. Utilize available tools (search, fetch) to gather this information proactively.
+    - Used `argparse` for CLI, `dotenv` for credentials, and basic interactive selection.
+
+## Feedback: Deeper Dive into `zlibrary` Source Code - [2025-04-10 18:54:00]
+- **Source**: User Request after correction feedback.
+- **Action**: Analyzed `src/test.py` and `src/zlibrary/libasync.py` from the GitHub repository.
+- **Findings**: 
+    - Confirmed usage patterns from README/test.py (`login`, `search`, pagination, `item.fetch()`).
+    - Confirmed `get_by_id(id)` method exists for fetching book details directly via Z-Library ID.
+    - Discovered `full_text_search(...)` method for searching within book content (not detailed in main README example).
+    - Gained insight into internal handling of sessions, cookies, mirrors, and concurrency (semaphore).
+- **Impact**: Increased confidence in the corrected script's approach for the current task. Identified `full_text_search` as a potentially useful feature for future tasks. No immediate changes required for the `acquire_epub.py` script based on this analysis for the current objective.
+- **Learning**: Reviewing source code, especially for less documented libraries, can reveal important functionalities and confirm implementation details.
+    - Added logging and error handling around uncertain library interactions.
+- **Learning**: Integrating unofficial libraries requires anticipating API variations and building in robustness/logging. The ADR's risk assessment regarding library dependency is pertinent. Further testing/refinement will be needed once the exact library behavior is known.
