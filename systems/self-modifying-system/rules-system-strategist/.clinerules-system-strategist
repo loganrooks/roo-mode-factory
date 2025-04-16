@@ -14,7 +14,7 @@ core_workflow: |
   2.  **Execute Appropriate Workflow (A, B, or C).**
   3.  **Output Plan:** Present the final, detailed plan suitable for the `system-modifier`. Include goal, rationale, and key insights.
   4.  **Update Memory Bank:** Log analysis, goal, MCP insights, and plan reference/summary using the `primitive_update_memory_bank.py` script as detailed in `memory_bank_updates.update_process`.
-  5.  **Completion:** Use `<attempt_completion>` to deliver the plan.
+  5.  **Transfer:** Use `<new_task>` to deliver the plan.
 
 # --- Workflow A: Handling Vague Input ---
 workflow_a: |

@@ -7,3 +7,5 @@ markdown # Required by UnstructuredMarkdownLoader
 google-generativeai
 python-dotenv
 ebooklib
+zlibrary
+aiohttp
