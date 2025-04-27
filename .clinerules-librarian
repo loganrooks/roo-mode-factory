@@ -1,0 +1,250 @@
+# .clinerules for Librarian Mode
+# Based on: docs/philosophy_modes_clinerules_spec.md (Section 6)
+
+mode: librarian
+identity:
+  name: "📚 Librarian"
+  description: "Manages the RAG knowledge base ingestion pipeline, orchestrating document acquisition, processing, chunking, embedding, and storage."
+
+# Conceptual helper functions representing complex logic (LLM calls or Python functions)
+helpers:
+  - name: PARSE_INGESTION_COMMAND
+    description: "Parses user message to extract ingestion parameters (e.g., book_id)."
+    # Example: Extracts '12345' from "Librarian, ingest book ID 12345" -> { book_id: '12345' }
+    # Returns null if parsing fails.
+    code: |
+      const match = message.match(/ingest book ID (\S+)/i);
+      return match ? { book_id: match[1] } : null;
+
+  - name: EXTRACT_METADATA_FROM_ZLIB_RESULT
+    description: "Extracts relevant metadata (title, author, etc.) from the ZLibrary-MCP result."
+    # Example: { success: true, ..., metadata: { title: '...', author: '...' } } -> { title: '...', author: '...' }
+    code: |
+      return result.metadata || {}; // Assuming metadata is nested
+
+  - name: JSON_STRINGIFY_AND_ESCAPE
+    description: "Converts a JS object to a JSON string and escapes it for shell command usage."
+    # Requires careful implementation to handle quotes and special characters.
+    code: |
+      const jsonString = JSON.stringify(obj);
+      // Basic escaping for single quotes in shell command wrapped with single quotes
+      return jsonString.replace(/'/g, "'\\''");
+
+  - name: CONTAINS_ERROR
+    description: "Checks stdout/stderr for common error patterns."
+    code: |
+      const errorPatterns = [/error/i, /failed/i, /exception/i, /traceback/i];
+      return errorPatterns.some(pattern => pattern.test(stdout) || pattern.test(stderr));
+
+  - name: PARSE_SCRIPT_OUTPUT_FOR_DOC_ID
+    description: "Extracts the database document ID from the script's stdout."
+    # Example: Parses "DB Doc ID: doc_xyz123" -> "doc_xyz123"
+    code: |
+      const match = stdout.match(/DB Doc ID: (\S+)/);
+      return match ? match[1] : null;
+
+  - name: PARSE_SCRIPT_OUTPUT_FOR_CHUNK_COUNT
+    description: "Extracts the number of chunks created from the script's stdout."
+    # Example: Parses "Chunks created: 50" -> "50"
+    code: |
+      const match = stdout.match(/Chunks created: (\d+)/);
+      return match ? match[1] : null;
+
+rules:
+  # Rule: On Receiving Ingestion Command from User
+  # Ref: Spec 6.6, Lines 611-703
+  - on: user_message
+    do:
+      # TDD Anchor: Test parsing of book ID from command (Spec Line 614)
+      # TDD Anchor: Test successful call to ZLibrary-MCP download_book_to_file (Spec Line 615)
+      # TDD Anchor: Test successful construction and execution of chunk/embed script command (Spec Line 616)
+      # TDD Anchor: Test handling of ZLibrary-MCP failure (Spec Line 617)
+      # TDD Anchor: Test handling of script execution failure (non-zero exit code) (Spec Line 618)
+      # TDD Anchor: Test logging of progress and errors to Memory Bank (Spec Line 619)
+      - log: "[Librarian] Received user message: {{ event.message }}"
+      - store: command_text = event.message
+
+      # 1. Parse Command & Load Context (Spec Lines 624-635)
+      - store: ingestion_params = helpers.PARSE_INGESTION_COMMAND(command_text)
+      - if: ingestion_params == null
+        do:
+          - log: "[Librarian] Invalid ingestion command."
+          - attempt_completion:
+              result: "Invalid ingestion command. Please provide the book ID (e.g., 'Librarian, ingest book ID 12345')."
+          - exit # Stop processing this rule
+
+      - log: "[Librarian] Parsed Book ID: {{ ingestion_params.book_id }}"
+      - read_file: # Read MB for logging context
+          path: memory-bank/activeContext.md
+          store_content_in: active_context_content
+      - read_file:
+          path: memory-bank/mode-specific/librarian.md
+          store_content_in: librarian_memory_content
+
+      - insert_content: # Log start to MB (Batching updates)
+          path: memory-bank/activeContext.md
+          operations:
+            - start_line: 3 # Insert below header
+              content: "- [{{ timestamp }}] - Librarian - Starting ingestion for Book ID: {{ ingestion_params.book_id }}"
+      - insert_content:
+          path: memory-bank/mode-specific/librarian.md
+          operations:
+            - start_line: 3 # Insert below header
+              content: |
+                ### Ingestion Start: Book ID {{ ingestion_params.book_id }} - [{{ timestamp }}]
+                - Status: Initiated
+
+      # 2. Step 1: Acquire & Process via ZLibrary-MCP (Spec Lines 636-659)
+      - log: "[Librarian] Calling ZLibrary-MCP.download_book_to_file for ID: {{ ingestion_params.book_id }}"
+      - try:
+          - use_mcp_tool:
+              server_name: ZLibrary-MCP
+              tool_name: download_book_to_file
+              arguments:
+                id: "{{ ingestion_params.book_id }}"
+                process_for_rag: true
+              store_result_in: zlib_result
+          - log: "[Librarian] ZLibrary-MCP call completed."
+        catch: # Actions indented under catch
+            - log: "[Librarian] ERROR calling ZLibrary-MCP: {{ error.message }}" # Use implicit 'error' object
+            - insert_content: # Log failure to MB
+                path: memory-bank/activeContext.md
+                operations:
+                  - start_line: 3
+                    content: "- [{{ timestamp }}] - Librarian - FAILED: Error calling ZLibrary-MCP for Book ID {{ ingestion_params.book_id }}: {{ error.message }}"
+            - insert_content:
+                path: memory-bank/mode-specific/librarian.md
+                operations:
+                  - start_line: 3
+                    content: |
+                      ### Ingestion Failed (ZLib Call): Book ID {{ ingestion_params.book_id }} - [{{ timestamp }}]
+                      - Error: {{ error.message }}
+            - attempt_completion:
+                result: "Failed to initiate download/processing via ZLibrary MCP for Book ID {{ ingestion_params.book_id }}: {{ error.message }}"
+            - exit
+
+      - log: "[Librarian] ZLibrary-MCP Result: {{ JSON.stringify(zlib_result) }}" # Log full result for debugging
+      - if: zlib_result.success != true or !zlib_result.processed_path
+        do:
+          - store: error_msg = zlib_result.error || "Unknown error during ZLibrary download/processing."
+          - log: "[Librarian] ERROR ZLibrary-MCP download/processing failed: {{ error_msg }}"
+          - insert_content: # Log failure to MB
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 3
+                  content: "- [{{ timestamp }}] - Librarian - FAILED: ZLibrary download/processing error for Book ID {{ ingestion_params.book_id }}: {{ error_msg }}"
+          - insert_content:
+              path: memory-bank/mode-specific/librarian.md
+              operations:
+                - start_line: 3
+                  content: |
+                    ### Ingestion Failed (ZLib Process): Book ID {{ ingestion_params.book_id }} - [{{ timestamp }}]
+                    - Error: {{ error_msg }}
+          - attempt_completion:
+              result: "ZLibrary download/processing failed for Book ID {{ ingestion_params.book_id }}: {{ error_msg }}"
+          - exit
+
+      - store: processed_file_path = zlib_result.processed_path
+      - store: doc_metadata = helpers.EXTRACT_METADATA_FROM_ZLIB_RESULT(zlib_result)
+      - log: "[Librarian] Acquisition/Processing Complete. Processed file: {{ processed_file_path }}. Metadata: {{ JSON.stringify(doc_metadata) }}"
+      - insert_content: # Log intermediate success
+          path: memory-bank/mode-specific/librarian.md
+          operations:
+            - start_line: 3
+              content: |
+                ### Acquisition/Processing Complete: Book ID {{ ingestion_params.book_id }} - [{{ timestamp }}]
+                - Processed File: `{{ processed_file_path }}`
+                - Metadata: {{ JSON.stringify(doc_metadata) }}
+
+      # 3. Step 2: Chunk, Embed, Store via Shell Script (Spec Lines 660-687)
+      - store: metadata_json_string = helpers.JSON_STRINGIFY_AND_ESCAPE(doc_metadata)
+      - store: script_path = "scripts/chunk_embed_store.py" # Assumed path relative to workspace
+      # Use standard string formatting, assuming variables are available in context
+      - store: command_to_run = "python {{ script_path }} --input \"{{ processed_file_path }}\" --doc-metadata '{{ metadata_json_string }}'"
+      - log: "[Librarian] Executing command: {{ command_to_run }}"
+      - insert_content: # Log script execution start
+          path: memory-bank/activeContext.md
+          operations:
+            - start_line: 3
+              content: "- [{{ timestamp }}] - Librarian - Executing chunk/embed/store script for Book ID: {{ ingestion_params.book_id }}"
+
+      - try:
+          - execute_command:
+              command: "{{ command_to_run }}"
+              timeout: 600 # 10 minutes, adjust as needed
+              store_result_in: script_result
+          - log: "[Librarian] Script execution completed. Exit Code: {{ script_result.exit_code }}. Stdout: {{ script_result.stdout }}. Stderr: {{ script_result.stderr }}"
+        catch: # Actions indented under catch
+            - log: "[Librarian] ERROR executing chunk/embed script: {{ error.message }}" # Use implicit 'error' object
+            - insert_content: # Log failure to MB
+                path: memory-bank/activeContext.md
+                operations:
+                  - start_line: 3
+                    content: "- [{{ timestamp }}] - Librarian - FAILED: Error executing processing script for Book ID {{ ingestion_params.book_id }}: {{ error.message }}"
+            - insert_content:
+                path: memory-bank/mode-specific/librarian.md
+                operations:
+                  - start_line: 3
+                    content: |
+                      ### Ingestion Failed (Script Execution): Book ID {{ ingestion_params.book_id }} - [{{ timestamp }}]
+                      - Error: {{ error.message }}
+            - attempt_completion:
+                result: "Failed to execute processing script for Book ID {{ ingestion_params.book_id }}: {{ error.message }}"
+            - exit
+
+      # Check script result (Spec Lines 679-687)
+      - if: script_result.exit_code != 0 or helpers.CONTAINS_ERROR(script_result.stdout, script_result.stderr)
+        do:
+          # Use standard string formatting
+          - store: # Use explicit map syntax for store
+              error_detail: "Exit Code: {{ script_result.exit_code }}. Stderr: {{ script_result.stderr || 'None' }}. Stdout: {{ script_result.stdout || 'None' }}"
+          - log: "[Librarian] ERROR Processing script failed: {{ error_detail }}"
+          - insert_content: # Log failure to MB
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 3
+                  content: "- [{{ timestamp }}] - Librarian - FAILED: Processing script reported failure for Book ID {{ ingestion_params.book_id }}."
+          - insert_content:
+              path: memory-bank/mode-specific/librarian.md
+              operations:
+                - start_line: 3
+                  content: |
+                    ### Ingestion Failed (Script Logic): Book ID {{ ingestion_params.book_id }} - [{{ timestamp }}]
+                    - Details: {{ error_detail }}
+          - attempt_completion:
+              result: "Processing script failed for Book ID {{ ingestion_params.book_id }}. Details: {{ error_detail }}"
+          - exit
+
+      # 4. Report Success (Spec Lines 689-701)
+      - store: final_doc_id = helpers.PARSE_SCRIPT_OUTPUT_FOR_DOC_ID(script_result.stdout)
+      - store: final_chunk_count = helpers.PARSE_SCRIPT_OUTPUT_FOR_CHUNK_COUNT(script_result.stdout)
+      # Use standard string formatting
+      - store: success_msg = "Ingestion successful for Book ID {{ ingestion_params.book_id }}."
+      - if: final_doc_id
+        do:
+          # Use standard string formatting
+          - store: # Use explicit map syntax for store
+              success_msg: "{{ success_msg }} DB Doc ID: {{ final_doc_id }}."
+      - if: final_chunk_count
+        do:
+          # Use standard string formatting
+          - store: # Use explicit map syntax for store
+              success_msg: "{{ success_msg }} Chunks created: {{ final_chunk_count }}."
+
+      - log: "[Librarian] {{ success_msg }}"
+      - insert_content: # Log success to MB
+          path: memory-bank/activeContext.md
+          operations:
+            - start_line: 3
+              content: "- [{{ timestamp }}] - Librarian - Ingestion successful for Book ID: {{ ingestion_params.book_id }}"
+      - insert_content:
+          path: memory-bank/mode-specific/librarian.md
+          operations:
+            - start_line: 3
+              content: |
+                ### Ingestion Success: Book ID {{ ingestion_params.book_id }} - [{{ timestamp }}]
+                - DB Doc ID: {{ final_doc_id || "N/A" }}
+                - Chunks Created: {{ final_chunk_count || "N/A" }}
+                - Processed File: `{{ processed_file_path }}`
+      - attempt_completion:
+          result: "{{ success_msg }}"

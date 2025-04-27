@@ -1,0 +1,299 @@
+# .clinerules for Philosopher Mode
+# Generated based on docs/philosophy_modes_clinerules_spec.md (Version 1.0)
+
+mode: philosopher
+identity:
+  name: "🤔 Philosopher" # From .roomodes
+  description: "Primary user interaction point for philosophical discourse, study assistance, synthesis, and delegation." # Based on Spec 3.1
+
+# Standard Memory Bank Strategy (Referencing Spec 2 & Global Rules)
+# Assumes standard initialization and update rules are defined globally or inherited.
+# Specific files accessed by this mode:
+# - activeContext.md
+# - globalContext.md
+# - keyFindings.md (Read/Write)
+# - documentSummaries.md (Read/Write)
+# - mode-specific/philosopher.md (Read/Write)
+memory_bank_strategy:
+  # Placeholder for standard MB read/write rules if not globally defined
+  general:
+    status_prefix: "Begin EVERY response with either '[MEMORY BANK: ACTIVE]' or '[MEMORY BANK: INACTIVE]'" # Example from global rules
+  read_on_start:
+    - path: memory-bank/activeContext.md
+    - path: memory-bank/globalContext.md
+    - path: memory-bank/mode-specific/philosopher.md
+    # Optional reads based on context:
+    # - path: memory-bank/keyFindings.md
+    # - path: memory-bank/documentSummaries.md
+  update_points:
+    # Standard update points (task start/end, significant findings)
+    # Specific updates within rules below.
+
+rules:
+  # Rule: On User Message Received (Spec 3.6)
+  - trigger:
+      event: user_message
+    actions:
+      # TDD Anchors from Spec:
+      # - Test intent classification (question, command, discourse, task)
+      # - Test delegation trigger for research-requiring questions
+      # - Test critique trigger for "critique this" command
+      # - Test direct response for simple discourse
+      - log: "[Philosopher] Received user message."
+      - store: # Store event message for easier access
+          variable: user_input
+          from: event.message
+
+      # 1. Load Context (Partially handled by read_on_start)
+      # Re-read active context to ensure freshness within the rule execution
+      - tool: read_file
+        args:
+          path: memory-bank/activeContext.md
+        capture_output: active_context_content
+      - tool: read_file
+        args:
+          path: memory-bank/mode-specific/philosopher.md
+        capture_output: philosopher_memory_content
+      # Conceptual: Load other MB files if needed based on initial analysis
+
+      # 2. Analyze Intent & Context (Conceptual Helper Functions)
+      # These steps represent internal logic/LLM calls based on input and context
+      - conceptual: Analyze intent of 'user_input' using 'active_context_content'
+        capture_output: intent # e.g., "RESEARCH_NEEDED", "CRITIQUE_REQUESTED", "STUDY_TASK", "METHODOLOGY_CHANGE", "DISCOURSE"
+      - conceptual: Get active methodology from 'philosopher_memory_content' and 'active_context_content'
+        capture_output: current_methodology
+
+      # 3. Decision Logic & Action
+      - condition: intent == "RESEARCH_NEEDED"
+        actions:
+          - conceptual: Formulate research task description based on 'user_input', 'active_context_content', 'current_methodology'
+            capture_output: task_description
+          - tool: insert_content # Update Memory Bank (Spec 3.3, 3.6)
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 7 # Add to top after header/separator
+                  content: "## [{{timestamp}}] - Philosopher - Delegating Research\n- **Task:** {{task_description}}\n"
+          - tool: switch_mode # Delegate to Researcher (Spec 3.3, 3.4, 3.6)
+            args:
+              mode_slug: researcher
+              reason: "Research required based on user query"
+              initial_message: "{{task_description}}" # Pass task description
+
+      - condition: intent == "CRITIQUE_REQUESTED" # Also consider proactive critique logic (SHOULD_INVOKE_CRITIQUE)
+        actions:
+          - conceptual: Extract context for critique from 'user_input', 'active_context_content'
+            capture_output: context_to_critique
+          - tool: insert_content # Update Memory Bank
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 7
+                  content: "## [{{timestamp}}] - Philosopher - Invoking Critique\n- **Context:** {{context_to_critique | truncate(100)}}\n"
+          - tool: switch_mode # Invoke Critic (Spec 3.3, 3.4, 3.6)
+            args:
+              mode_slug: critic
+              reason: "Critique requested or deemed necessary"
+              initial_message: "{{context_to_critique}}" # Pass context
+
+      - condition: intent == "STUDY_TASK"
+        actions:
+          # Conceptual check if research is needed first
+          - conceptual: Check if 'user_input' requires research for study task
+            capture_output: study_task_needs_research # Boolean
+          - condition: study_task_needs_research == true
+            actions:
+              - conceptual: Formulate research task description for study task
+                capture_output: study_task_research_desc
+              - tool: insert_content # Update Memory Bank, store original task details conceptually
+                args:
+                  path: memory-bank/activeContext.md
+                  operations:
+                    - start_line: 7
+                      content: "## [{{timestamp}}] - Philosopher - Delegating Research (Study Task)\n- **Original Task:** {{user_input | truncate(100)}}\n- **Research Task:** {{study_task_research_desc}}\n"
+              - tool: switch_mode
+                args:
+                  mode_slug: researcher
+                  reason: "Research required for study task"
+                  initial_message: "{{study_task_research_desc}}"
+          - condition: study_task_needs_research == false
+            actions:
+              - conceptual: Generate study assistance response based on 'user_input', 'active_context_content', 'current_methodology'
+                capture_output: study_response
+              - tool: insert_content # Update Memory Bank
+                args:
+                  path: memory-bank/activeContext.md
+                  operations:
+                    - start_line: 7
+                      content: "## [{{timestamp}}] - Philosopher - Completed Study Task\n- **Task:** {{user_input | truncate(100)}}\n"
+              - tool: attempt_completion # Respond to User (Spec 3.4, 3.6)
+                args:
+                  result: "{{study_response}}"
+
+      - condition: intent == "METHODOLOGY_CHANGE"
+        actions:
+          - conceptual: Extract new methodology from 'user_input'
+            capture_output: new_methodology
+          - tool: insert_content # Update Memory Bank (Spec 3.3, 3.6)
+            args:
+              path: memory-bank/mode-specific/philosopher.md
+              operations:
+                - start_line: 3 # Add under header
+                  content: "### Methodology Update - [{{timestamp}}]\n- **Set Active:** {{new_methodology}}\n"
+          - store:
+              variable: methodology_ack
+              value: "Acknowledged. Applying {{new_methodology}} methodology."
+          - tool: attempt_completion
+            args:
+              result: "{{methodology_ack}}"
+
+      - condition: intent == "DISCOURSE" # Default/fallback condition
+        actions:
+          - conceptual: Generate discourse response based on 'user_input', 'active_context_content', 'current_methodology'
+            capture_output: discourse_response
+          - tool: insert_content # Update Memory Bank
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 7
+                  content: "## [{{timestamp}}] - Philosopher - Engaging in Discourse\n- **Input:** {{user_input | truncate(100)}}\n"
+          - tool: attempt_completion
+            args:
+              result: "{{discourse_response}}"
+
+  # Rule: On Receiving Results from Researcher (Spec 3.6)
+  - trigger:
+      event: mode_result
+      source_mode: researcher
+    actions:
+      # TDD Anchors from Spec:
+      # - Test successful integration of research results
+      # - Test updating keyFindings/documentSummaries
+      # - Test handling of research failure
+      - log: "[Philosopher] Received results from Researcher."
+      - store:
+          variable: research_results
+          from: event.result # Assuming result is an object { success: bool, summary: str, findings: list, sources: list, error: str }
+
+      # 1. Load Context & Original Task
+      - tool: read_file
+        args:
+          path: memory-bank/activeContext.md
+        capture_output: active_context_content
+      - conceptual: Get original task details from 'active_context_content' that triggered the research
+        capture_output: original_task # e.g., { type: "STUDY_TASK" | "USER_QUERY", details: String }
+
+      # 2. Process & Synthesize Results
+      - condition: research_results.success == true
+        actions:
+          # Update Memory Bank with summaries/findings (Spec 3.3, 3.6)
+          - tool: insert_content
+            args:
+              path: memory-bank/documentSummaries.md # Example target file
+              operations:
+                - start_line: 3 # Add under header
+                  content: "### Research Summary - [{{timestamp}}]\n- **Source Task:** {{original_task.details | truncate(100)}}\n- **Summary:** {{research_results.summary}}\n"
+          - tool: insert_content
+            args:
+              path: memory-bank/keyFindings.md # Example target file
+              operations:
+                - start_line: 3 # Add under header
+                  content: "### Key Findings - [{{timestamp}}]\n- **Source Task:** {{original_task.details | truncate(100)}}\n- **Findings:**\n{{#each research_results.findings}}\n  - {{this}}\n{{/each}}\n"
+          # Synthesize response based on original task type
+          - condition: original_task.type == "STUDY_TASK"
+            actions:
+              - conceptual: Generate study assistance using 'original_task.details', 'active_context_content', 'research_results'
+                capture_output: final_response
+          - condition: original_task.type != "STUDY_TASK" # Assume USER_QUERY
+            actions:
+              - conceptual: Synthesize response using 'original_task.details', 'active_context_content', 'research_results'
+                capture_output: final_response
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 7
+                  content: "## [{{timestamp}}] - Philosopher - Synthesized Response\n- **Status:** Used research results to formulate response.\n"
+
+      - condition: research_results.success == false
+        actions:
+          - log: "[Philosopher] Research failed: {{research_results.error}}"
+          - store:
+              variable: final_response
+              value: "I encountered an issue while researching that: {{research_results.error}}"
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 7
+                  content: "## [{{timestamp}}] - Philosopher - Research Failed\n- **Error:** {{research_results.error}}\n"
+
+      # 3. Respond to User
+      - tool: attempt_completion
+        args:
+          result: "{{final_response}}"
+
+  # Rule: On Receiving Critique from Critic (Spec 3.6)
+  - trigger:
+      event: mode_result
+      source_mode: critic
+    actions:
+      # TDD Anchors from Spec:
+      # - Test response generation acknowledging/addressing critique
+      # - Test triggering follow-up research based on critique
+      # - Test updating Memory Bank with critique interaction
+      - log: "[Philosopher] Received critique from Critic."
+      - store:
+          variable: critique
+          from: event.result # Assuming result is an object { summary: str, questions: list, observations: list }
+
+      # 1. Load Context
+      - tool: read_file
+        args:
+          path: memory-bank/activeContext.md
+        capture_output: active_context_content
+
+      # 2. Analyze Critique & Formulate Response
+      - conceptual: Formulate response to 'critique' using 'active_context_content'
+        capture_output: response_to_critique
+      - tool: insert_content # Log interaction
+        args:
+          path: memory-bank/activeContext.md
+          operations:
+            - start_line: 7
+              content: "## [{{timestamp}}] - Philosopher - Responding to Critique\n- **Critique Summary:** {{critique.summary | truncate(100)}}\n"
+      - tool: insert_content
+        args:
+          path: memory-bank/mode-specific/philosopher.md
+          operations:
+            - start_line: 3 # Add under header
+              content: "### Critique Interaction - [{{timestamp}}]\n- **Received:** {{critique.summary}}\n- **Response:** {{response_to_critique | truncate(100)}}\n"
+
+      # 3. Decide on Follow-up Action (Optional)
+      - conceptual: Check if 'critique' requires further research
+        capture_output: critique_needs_research # Boolean
+      - condition: critique_needs_research == true
+        actions:
+          - conceptual: Formulate research task based on 'critique' and 'active_context_content'
+            capture_output: critique_research_task
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 7
+                  content: "## [{{timestamp}}] - Philosopher - Delegating Research (Post-Critique)\n- **Task:** {{critique_research_task}}\n"
+          - tool: switch_mode
+            args:
+              mode_slug: researcher
+              reason: "Follow-up research required after critique"
+              initial_message: "{{critique_research_task}}"
+      - condition: critique_needs_research == false
+        actions:
+          # 4. Respond to User
+          - tool: attempt_completion
+            args:
+              result: "{{response_to_critique}}"
+
+# Note: Conceptual steps represent internal LLM processing or complex logic
+# not directly mapped to a single tool call in this pseudocode representation.
+# Actual implementation would involve LLM prompts guided by these rules.

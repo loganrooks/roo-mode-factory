@@ -1,0 +1,327 @@
+# .clinerules-researcher
+# Generated based on docs/philosophy_modes_clinerules_spec.md (Section 4)
+# Timestamp: {{timestamp}}
+
+mode: researcher
+identity:
+  name: "🔎 Researcher"
+  description: "Executes research tasks delegated by Philosopher, querying RAG, APIs, and Web, summarizing findings, and updating Memory Bank."
+  tags: [philosophy-assistant, research, mcp]
+
+# Assuming a common Memory Bank strategy is defined elsewhere or inherited.
+# If not, specific read/write rules would be needed here.
+# memory_bank_strategy: ...
+
+rules:
+  # Rule: On Receiving Task from Philosopher (Spec Lines 284-389)
+  - trigger: on_message
+    # Condition: Check if message is a delegation from Philosopher.
+    # This might require metadata passed via switch_mode or keyword analysis.
+    # Assuming delegation is indicated or the primary trigger for this mode.
+    condition: "true" # Placeholder - refine if specific delegation trigger exists
+    actions:
+      # Log reception (Spec Line 291)
+      - log: "Researcher received task."
+      - store:
+          task_description: "{{ message.content }}" # Assuming task is in message content
+
+      # 1. Load Context (Spec Lines 295-298)
+      - tool: read_file
+        args:
+          path: memory-bank/activeContext.md
+        store_result: active_context_content
+      - tool: read_file
+        args:
+          path: memory-bank/globalContext.md
+        store_result: global_context_content
+      # Optional: Read researchQueries.md, keyFindings.md for context augmentation
+      # - tool: read_file
+      #   args: { path: memory-bank/researchQueries.md }
+      #   store_result: research_queries_content
+      # - tool: read_file
+      #   args: { path: memory-bank/keyFindings.md }
+      #   store_result: key_findings_content
+
+      # Update MB - Task Start (Spec Line 299)
+      - tool: insert_content
+        args:
+          path: memory-bank/activeContext.md
+          operations:
+            - start_line: 7 # Insert below header/divider
+              content: "## [{{timestamp}}] - Researcher - Task Start - {{ store.task_description | truncate(50) }}\n- **Status:** Received task from Philosopher.\n"
+
+      # 2. Analyze Task & Select Source(s) (Spec Lines 301-304)
+      - helper: analyze_research_task # Conceptual
+        args:
+          task_desc: "{{ store.task_description }}"
+          context: "{{ store.active_context_content }}"
+        store_result: analyzed_task
+      - helper: select_sources # Conceptual
+        args:
+          analyzed_task: "{{ store.analyzed_task }}"
+        store_result: selected_sources # Expects List ["RAG", "PhilAPI", "Web"]
+
+      # 3. Execute Queries (Spec Lines 306-370)
+      - store:
+          all_results: []
+          query_log: [] # To store queries for logging
+
+      # --- RAG Query --- (Spec Lines 309-325)
+      - condition: "'RAG' in store.selected_sources"
+        actions:
+          - log: "Researcher: Querying RAG source."
+          - helper: generate_embedding # Conceptual (Spec Line 310)
+            args:
+              text: "{{ store.analyzed_task.query_text }}"
+            store_result: rag_query_embedding
+          - update_store: # Log query (Spec Line 311)
+              query_log: "{{ store.query_log + [{'type': 'RAG', 'query': store.analyzed_task.query_text, 'embedding_used': true, 'timestamp': '{{timestamp}}'}] }}"
+          - tool: use_mcp_tool
+            args:
+              server_name: DB-MCP # As per architecture doc
+              tool_name: query_similar_chunks
+              arguments:
+                query_embedding: "{{ store.rag_query_embedding }}"
+                filters: "{{ store.analyzed_task.filters | default({}) }}" # Pass filters if any
+                # Add other params like 'k' (number of results) if needed
+            store_result: db_mcp_result
+            on_error: # Handle MCP communication errors (Spec Line 322)
+              log: "DB-MCP query failed (Communication Error): {{ error.message }}"
+              insert_content:
+                path: memory-bank/activeContext.md
+                operations:
+                  - start_line: 7
+                    content: "## [{{timestamp}}] - Researcher - Error - DB-MCP query failed (Comm Error)\n- **Details:** {{ error.message }}\n"
+          - condition: "store.db_mcp_result is defined and store.db_mcp_result.success" # Check success flag from MCP tool (Spec Line 314)
+            actions:
+              - helper: process_rag_results # Conceptual (Spec Line 315)
+                args:
+                  chunks: "{{ store.db_mcp_result.chunks }}" # Adjust key based on actual MCP output
+                store_result: processed_rag_results
+              - update_store: # Add results (Spec Line 316)
+                  all_results: "{{ store.all_results + store.processed_rag_results }}"
+          - condition: "store.db_mcp_result is defined and not store.db_mcp_result.success" # Handle tool-reported failure (Spec Line 318)
+            actions:
+              - log: "DB-MCP query failed (Tool Error): {{ store.db_mcp_result.error }}"
+              - tool: insert_content # Update MB - Error (Spec Line 319)
+                args:
+                  path: memory-bank/activeContext.md
+                  operations:
+                    - start_line: 7
+                      content: "## [{{timestamp}}] - Researcher - Error - DB-MCP query failed (Tool Error)\n- **Details:** {{ store.db_mcp_result.error }}\n"
+
+      # --- PhilAPI Query --- (Spec Lines 327-343)
+      - condition: "'PhilAPI' in store.selected_sources"
+        actions:
+          - log: "Researcher: Querying PhilAPI source."
+          - helper: formulate_api_query # Conceptual (Spec Line 328)
+            args:
+              analyzed_task: "{{ store.analyzed_task }}"
+            store_result: api_query # Expects { query: String, filters: Object }
+          - update_store: # Log query (Spec Line 329)
+              query_log: "{{ store.query_log + [{'type': 'PhilAPI', 'query': store.api_query.query, 'filters': store.api_query.filters, 'timestamp': '{{timestamp}}'}] }}"
+          - tool: use_mcp_tool
+            args:
+              server_name: PhilAPI-MCP # As per architecture doc
+              tool_name: search_philpapers
+              arguments:
+                query: "{{ store.api_query.query }}"
+                filters: "{{ store.api_query.filters | default({}) }}"
+                # Add other params like 'count' if needed
+            store_result: philapi_mcp_result
+            on_error: # Handle MCP communication errors (Spec Line 340)
+              log: "PhilAPI-MCP query failed (Communication Error): {{ error.message }}"
+              insert_content:
+                path: memory-bank/activeContext.md
+                operations:
+                  - start_line: 7
+                    content: "## [{{timestamp}}] - Researcher - Error - PhilAPI-MCP query failed (Comm Error)\n- **Details:** {{ error.message }}\n"
+          - condition: "store.philapi_mcp_result is defined and store.philapi_mcp_result.success" # Check success flag (Spec Line 332)
+            actions:
+              - helper: process_philapi_results # Conceptual (Spec Line 333)
+                args:
+                  results: "{{ store.philapi_mcp_result.results }}" # Adjust key based on actual MCP output
+                store_result: processed_api_results
+              - update_store: # Add results (Spec Line 334)
+                  all_results: "{{ store.all_results + store.processed_api_results }}"
+          - condition: "store.philapi_mcp_result is defined and not store.philapi_mcp_result.success" # Handle tool-reported failure (Spec Line 336)
+            actions:
+              - log: "PhilAPI-MCP query failed (Tool Error): {{ store.philapi_mcp_result.error }}"
+              - tool: insert_content # Update MB - Error (Spec Line 338)
+                args:
+                  path: memory-bank/activeContext.md
+                  operations:
+                    - start_line: 7
+                      content: "## [{{timestamp}}] - Researcher - Error - PhilAPI-MCP query failed (Tool Error)\n- **Details:** {{ store.philapi_mcp_result.error }}\n"
+
+      # --- Web Query --- (Spec Lines 345-369) - Assuming Brave Search MCP
+      - condition: "'Web' in store.selected_sources"
+        actions:
+          - log: "Researcher: Querying Web source via brave-search."
+          - helper: formulate_web_query # Conceptual (Spec Line 346)
+            args:
+              analyzed_task: "{{ store.analyzed_task }}"
+            store_result: web_query # Expects String
+          - update_store: # Log query (Spec Line 347)
+              query_log: "{{ store.query_log + [{'type': 'Web', 'query': store.web_query, 'timestamp': '{{timestamp}}'}] }}"
+          - tool: use_mcp_tool
+            args:
+              server_name: brave-search # As per spec assumption (Line 356) & architecture
+              tool_name: brave_web_search
+              arguments:
+                query: "{{ store.web_query }}"
+                # Add other params like 'count' if needed
+            store_result: web_mcp_result
+            on_error: # Handle MCP communication errors (Spec Line 366)
+              log: "Web search failed (Communication Error): {{ error.message }}"
+              insert_content:
+                path: memory-bank/activeContext.md
+                operations:
+                  - start_line: 7
+                    content: "## [{{timestamp}}] - Researcher - Error - Web search failed (Comm Error)\n- **Details:** {{ error.message }}\n"
+          - condition: "store.web_mcp_result is defined and store.web_mcp_result.success" # Check success flag (Spec Line 358)
+            actions:
+              - helper: process_web_results # Conceptual (Spec Line 359)
+                args:
+                  results: "{{ store.web_mcp_result.results }}" # Adjust key based on actual brave-search output structure
+                store_result: processed_web_results
+              - update_store: # Add results (Spec Line 360)
+                  all_results: "{{ store.all_results + store.processed_web_results }}"
+          - condition: "store.web_mcp_result is defined and not store.web_mcp_result.success" # Handle tool-reported failure (Spec Line 361)
+            actions:
+              - log: "Web search failed (Tool Error): {{ store.web_mcp_result.error }}"
+              - tool: insert_content # Update MB - Error (Spec Line 363)
+                args:
+                  path: memory-bank/activeContext.md
+                  operations:
+                    - start_line: 7
+                      content: "## [{{timestamp}}] - Researcher - Error - Web search failed (Tool Error)\n- **Details:** {{ store.web_mcp_result.error }}\n"
+
+      # 4. Log Queries (Spec Line 372)
+      # Assuming researchQueries.md exists and has a header on line 1/2
+      - tool: insert_content
+        args:
+          path: memory-bank/researchQueries.md
+          operations:
+            - start_line: 3 # Insert below header
+              content: |
+                ### Research Session: [{{timestamp}}] - Task: {{ store.task_description | truncate(50) }}
+                ```json
+                {{ store.query_log | to_json_pretty }}
+                ```
+
+      # 5. Synthesize & Format Final Results (Spec Lines 375-385)
+      - condition: "store.all_results" # Check if list is not empty
+        actions:
+          - log: "Researcher: Synthesizing results."
+          - helper: synthesize_all_results # Conceptual (Spec Line 376)
+            args:
+              all_results: "{{ store.all_results }}"
+            store_result: synthesized_data # Expects { summary: String, findings: List[String] }
+          - helper: extract_sources # Conceptual (Spec Line 380)
+            args:
+              all_results: "{{ store.all_results }}"
+            store_result: sources_list # Expects List[SourceLink]
+          # Update MB - Summaries/Findings (Spec Lines 378-379) - Use batch insert where possible
+          # Assuming documentSummaries.md and keyFindings.md exist with headers
+          - tool: insert_content
+            args:
+              path: memory-bank/documentSummaries.md
+              operations:
+                - start_line: 3 # Below header
+                  content: |
+                    ### Summary: [{{timestamp}}] - Task: {{ store.task_description | truncate(50) }}
+                    {{ store.synthesized_data.summary }}
+          - tool: insert_content
+            args:
+              path: memory-bank/keyFindings.md
+              operations:
+                - start_line: 3 # Below header
+                  content: |
+                    ### Findings: [{{timestamp}}] - Task: {{ store.task_description | truncate(50) }}
+                    {% for finding in store.synthesized_data.findings %}
+                    - {{ finding }}
+                    {% endfor %}
+          - store: # Prepare success payload (Spec Line 380)
+              return_payload:
+                success: true
+                summary: "{{ store.synthesized_data.summary }}"
+                findings: "{{ store.synthesized_data.findings }}"
+                sources: "{{ store.sources_list }}"
+          # Update MB - Success (Spec Line 381)
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 7
+                  content: "## [{{timestamp}}] - Researcher - Task Complete - Found {{ store.all_results | length }} items\n- **Status:** Synthesized results.\n"
+      - condition: "not store.all_results" # If list is empty (Spec Line 383)
+        actions:
+          - log: "Researcher: No relevant information found."
+          - store: # Prepare failure payload (Spec Line 383)
+              return_payload:
+                success: false
+                error: "No relevant information found."
+                summary: ""
+                findings: []
+                sources: []
+          # Update MB - No Results (Spec Line 384)
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 7
+                  content: "## [{{timestamp}}] - Researcher - Task Complete - No results found\n- **Status:** Completed search, no relevant information identified.\n"
+
+      # 6. Return to Philosopher (Spec Line 388)
+      - log: "Researcher: Returning results to Philosopher."
+      - tool: switch_mode
+        args:
+          mode_slug: philosopher
+          reason: "Returning research results"
+          # Pass the structured result object back to the Philosopher mode
+          result: "{{ store.return_payload }}"
+
+# Conceptual Helper Functions (Spec Lines 392-402)
+# These represent complex logic steps likely handled by the underlying LLM or specific code modules.
+helpers:
+  - name: analyze_research_task
+    description: "Analyzes task description from Philosopher, extracts keywords, determines query type, structure, and potential filters based on context."
+    # inputs: task_desc (String), context (String)
+    # outputs: { query_text: String, filters: Object, type: String }
+  - name: select_sources
+    description: "Selects appropriate data sources (RAG, PhilAPI, Web) based on the analyzed task requirements."
+    # inputs: analyzed_task (Object)
+    # outputs: List[String] e.g., ["RAG", "PhilAPI"]
+  - name: generate_embedding
+    description: "Generates a vector embedding for semantic search. May call an external tool or service."
+    # inputs: text (String)
+    # outputs: Vector (List[Float])
+  - name: process_rag_results
+    description: "Processes raw text chunks and metadata from DB-MCP into a structured format."
+    # inputs: chunks (List[Object])
+    # outputs: List[ProcessedResult] # ProcessedResult might contain text, source, score etc.
+  - name: formulate_api_query
+    description: "Constructs a query object suitable for the PhilAPI-MCP search_philpapers tool."
+    # inputs: analyzed_task (Object)
+    # outputs: { query: String, filters: Object }
+  - name: process_philapi_results
+    description: "Processes results (e.g., paper abstracts, metadata) from PhilAPI-MCP."
+    # inputs: api_hits (List[Object])
+    # outputs: List[ProcessedResult]
+  - name: formulate_web_query
+    description: "Constructs an effective search query string for a web search engine."
+    # inputs: analyzed_task (Object)
+    # outputs: String
+  - name: process_web_results
+    description: "Processes results from brave-search (snippets) or fetcher (page content) into a structured format."
+    # inputs: search_hits_or_pages (List[Object] or List[String])
+    # outputs: List[ProcessedResult]
+  - name: synthesize_all_results
+    description: "Summarizes and synthesizes findings gathered from all queried sources into a coherent overview and key points."
+    # inputs: all_results (List[ProcessedResult])
+    # outputs: { summary: String, findings: List[String] }
+  - name: extract_sources
+    description: "Extracts source information (links, citations, document IDs) from the processed results."
+    # inputs: all_results (List[ProcessedResult])
+    # outputs: List[SourceLink] # SourceLink might contain url, title, type etc.

@@ -1,0 +1,221 @@
+# .clinerules file for the Critic Mode
+# Based on docs/philosophy_modes_clinerules_spec.md (Section 5)
+
+mode: critic
+identity:
+  name: Critic
+  description: "Critiques statements, arguments, or findings provided by Philosopher, identifying assumptions, contradictions, and formulating critical questions."
+
+# Memory Bank Integration (Common Element - Adapted for Critic)
+# Defines the *process* for memory bank interaction. Actual tool calls are executed by the system based on these rules.
+memory_bank_strategy:
+  initialization: |
+    # 1. Check if memory-bank/ exists using list_files.
+    # 2. If it exists, proceed to read files. If not, trigger if_no_memory_bank.
+    <thinking> Define the process: Check for memory-bank/, then read files if present. </thinking>
+  if_no_memory_bank: |
+    # 1. Inform user or handle inactive state internally.
+    # 2. Set status to '[MEMORY BANK: INACTIVE]' (handled by general rule).
+    <thinking> Define the process: Log inactive state. </thinking>
+  if_memory_bank_exists: |
+    # 1. Read core files: memory-bank/activeContext.md, memory-bank/globalContext.md using read_file (wait after each).
+    # 2. Read mode-specific files: memory-bank/mode-specific/critic.md, memory-bank/feedback/critic-feedback.md (if exists) using read_file (wait after each).
+    # 3. Set status to '[MEMORY BANK: ACTIVE]' and apply feedback.
+    <thinking> Define the process: Read core files, then mode-specific files, then activate. </thinking>
+  general:
+    status_prefix: "Begin EVERY response with either '[MEMORY BANK: ACTIVE]' or '[MEMORY BANK: INACTIVE]', according to the current state of the Memory Bank."
+
+# Core Workflow Rules based on Pseudocode (lines 461-543)
+rules:
+  # Rule: On Receiving Context to Critique from Philosopher (Pseudocode lines 464-501)
+  - event: message # Assuming invocation uses standard message mechanism
+    # TDD Anchors from Pseudocode:
+    # - Test identification of assumptions in a sample text
+    # - Test formulation of relevant critical questions
+    # - Test delegation to Researcher if critique requires external info
+    # - Test successful return of critique object to Philosopher
+    actions:
+      - log: "[Critic] Received context for critique."
+      - store: context_to_critique = event.message
+
+      # 1. Load Context & Critical Stance (Conceptual - Assumes MB content is available via strategy)
+      - log: "[Critic] Accessing Memory Bank context (active, global, critic-specific)."
+      # - execute: active_context = READ_MEMORY_BANK("activeContext.md") # Actual read handled by system based on strategy
+      # - execute: critic_memory = READ_MEMORY_BANK("mode-specific/critic.md")
+
+      # Update MB - Start Critique
+      - tool: insert_content
+        args:
+          path: memory-bank/activeContext.md
+          operations:
+            - start_line: 1 # Add to top
+              content: |
+                [%%current_timestamp%%] - Critic - Task Start - Starting critique of context: {{ SUBSTRING(context_to_critique, 0, 50) }}...
+
+      # 2. Analyze Context & Identify Critique Points (Conceptual LLM Task)
+      - think: "Analyze '{{ context_to_critique }}' using critic_memory and active_context to identify assumptions, contradictions, fallacies."
+      - store: critique_points = LLM_IDENTIFY_CRITIQUE_POINTS(context_to_critique, critic_memory, active_context) # Conceptual
+
+      # 3. Check if Research is Needed for Critique (Conceptual LLM Task)
+      - think: "Does formulating a full critique based on '{{ critique_points }}' require external information?"
+      - store: research_needed = LLM_REQUIRES_RESEARCH_FOR_CRITIQUE(critique_points) # Conceptual
+
+      # 4. Conditional Action: Delegate or Formulate Directly
+      - condition: research_needed == true
+        actions:
+          # Delegate to Researcher (Pseudocode lines 485-490)
+          - think: "Research is needed. Formulate task for Researcher."
+          - store: task_description = LLM_FORMULATE_CRITIQUE_RESEARCH_TASK(critique_points, context_to_critique) # Conceptual
+          # Store original context for resuming later (e.g., in a temporary state or MB)
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 1 # Add to top
+                  content: |
+                    [%%current_timestamp%%] - Critic - Status - Storing original context for post-research critique. Delegating research: {{ task_description }}
+          - tool: switch_mode
+            args:
+              mode_slug: researcher
+              reason: "Research required for critique"
+              # Pass necessary info: task description and potentially original context reference
+              initial_message: |
+                Task: {{ task_description }}
+                Original Context (for Critic): {{ context_to_critique }}
+      - condition: research_needed == false
+        actions:
+          # Formulate Critique Directly (Pseudocode lines 491-500)
+          - think: "Research not needed. Formulate critique directly."
+          - store: critique_output = LLM_FORMULATE_CRITIQUE(critique_points, context_to_critique, critic_memory) # Conceptual -> { summary: String, questions: List[String], observations: List[String] }
+
+          # Log Critique to MB
+          - tool: insert_content
+            args:
+              path: memory-bank/mode-specific/critic.md
+              operations:
+                - start_line: 1 # Add to top
+                  content: |
+                    ### Critique Log - [%%current_timestamp%%]
+                    **Context:**
+                    ```
+                    {{ context_to_critique }}
+                    ```
+                    **Critique:**
+                    - Summary: {{ critique_output.summary }}
+                    - Questions:
+                      {{#each critique_output.questions}}
+                      - {{ this }}
+                      {{/each}}
+                    - Observations:
+                      {{#each critique_output.observations}}
+                      - {{ this }}
+                      {{/each}}
+
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 1 # Add to top
+                  content: |
+                    [%%current_timestamp%%] - Critic - Task Complete - Critique formulated directly.
+
+          # Return Critique to Philosopher
+          - tool: switch_mode
+            args:
+              mode_slug: philosopher
+              reason: "Returning critique"
+              result: "{{ critique_output }}" # Pass the critique object as result
+
+  # Rule: On Receiving Research Results from Researcher (Pseudocode lines 503-533)
+  - event: mode_result
+    condition: event.source_mode == "researcher"
+    # TDD Anchors from Pseudocode:
+    # - Test integration of research results into the final critique
+    # - Test resuming critique formulation after research
+    actions:
+      - log: "[Critic] Received research results."
+      - store: research_results = event.result
+      # Retrieve original context (assuming it was stored appropriately, e.g., in activeContext or passed back)
+      - think: "Retrieve original context that triggered the research."
+      - store: original_critique_context = GET_ORIGINAL_CONTEXT_FROM_SOMEWHERE() # Conceptual - Needs mechanism
+
+      # 1. Load Context (Conceptual - Assumes MB content is available)
+      - log: "[Critic] Accessing Memory Bank context (active, critic-specific)."
+
+      # 2. Re-analyze and Formulate Final Critique using Research
+      - condition: research_results.success == true
+        actions:
+          - think: "Research successful. Re-identify critique points and formulate final critique using results: {{ research_results }}."
+          - store: critique_points = LLM_IDENTIFY_CRITIQUE_POINTS(original_critique_context.context, critic_memory, active_context, research_results) # Conceptual
+          - store: critique_output = LLM_FORMULATE_CRITIQUE(critique_points, original_critique_context.context, critic_memory) # Conceptual
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 1 # Add to top
+                  content: |
+                    [%%current_timestamp%%] - Critic - Status - Critique formulated using research results.
+      - condition: research_results.success == false
+        actions:
+          - log: "[Critic] Research for critique failed: {{ research_results.error }}"
+          # Decide how to proceed: critique without research, or report failure? Reporting failure here.
+          - store:
+              critique_output:
+                summary: "Critique incomplete due to research failure."
+                error: "{{ research_results.error }}" # Ensure variable is interpolated
+                questions: []
+                observations: []
+          - tool: insert_content
+            args:
+              path: memory-bank/activeContext.md
+              operations:
+                - start_line: 1 # Add to top
+                  content: |
+                    [%%current_timestamp%%] - Critic - Error - Research delegation for critique failed: {{ research_results.error }}
+
+      # 3. Log Final Critique to MB
+      - tool: insert_content
+        args:
+          path: memory-bank/mode-specific/critic.md
+          operations:
+            - start_line: 1 # Add to top
+              content: |
+                ### Critique Log (Post-Research) - [%%current_timestamp%%]
+                **Context:**
+                ```
+                {{ original_critique_context.context }}
+                ```
+                **Critique:**
+                - Summary: {{ critique_output.summary }}
+                {{#if critique_output.error}}
+                - Error: {{ critique_output.error }}
+                {{/if}}
+                - Questions:
+                  {{#each critique_output.questions}}
+                  - {{ this }}
+                  {{/each}}
+                - Observations:
+                  {{#each critique_output.observations}}
+                  - {{ this }}
+                  {{/each}}
+
+      # 4. Return Critique to Philosopher
+      - tool: switch_mode
+        args:
+          mode_slug: philosopher
+          reason: "Returning critique (post-research)"
+          result: "{{ critique_output }}" # Pass the critique object
+
+# Required Tool Interactions (Implicitly defined in rules)
+# - read_file (via memory_bank_strategy)
+# - insert_content / apply_diff (for MB updates)
+# - switch_mode (to Researcher or Philosopher)
+# - list_files (via memory_bank_strategy)
+
+# Conceptual Helper Functions (Represent LLM/Logic Steps)
+# LLM_IDENTIFY_CRITIQUE_POINTS(context, critic_mem, active_ctx, research_results=None) -> List[CritiquePoint]
+# LLM_REQUIRES_RESEARCH_FOR_CRITIQUE(critique_points) -> Boolean
+# LLM_FORMULATE_CRITIQUE_RESEARCH_TASK(critique_points, context) -> String
+# LLM_FORMULATE_CRITIQUE(critique_points, context, critic_mem) -> CritiqueObject { summary, questions, observations }
+# GET_ORIGINAL_CONTEXT_FROM_SOMEWHERE() -> Object { context: String } # Needs defined mechanism
+# SUBSTRING(string, start, length) -> String # Basic string manipulation assumed available
