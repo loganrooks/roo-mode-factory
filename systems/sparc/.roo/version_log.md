@@ -23,3 +23,21 @@
 - **Notes:** Changes were applied via the `system-modifier` mode, orchestrated by `sparc` mode. `.clinerules-system-refiner` and `.clinerules-system-modifier` were checked and already contained relevant updates (Proposal 8).
 
 ---
+---
+
+---
+
+### [2025-04-27] System Rules Refinement (Report 2025-04-27)
+
+- **Source:** `docs/reviews/system_refinement_report_20250427.md`
+- **Changes Applied:**
+    - Updated `general.error_handling_protocol` across all modes to include checks for `read_file` truncation, `apply_diff` context mismatch, a "three strikes" rule for tool failures, and mandatory intervention logging before proceeding (Proposal 1, 3, 4).
+    - Updated `general.api_efficiency` in relevant modes (`code`, `tdd`, `debug`) to strengthen preference for partial reads (Proposal 1).
+    - Updated `memory_bank_updates.feedback_handling` across all modes to mandate immediate logging of interventions (Proposal 4).
+    - Updated `memory_bank_updates.frequency` across all modes to include detailed pre-completion check requirements (Proposal 5).
+    - Added `general.critical_evaluation` rule to all modes to encourage re-evaluation of diagnoses under high context or contradictory evidence (Proposal 5).
+    - Updated `.roo/rules-sparc/.clinerules-sparc`:
+        - Replaced `general.context_management` with enhanced `DELEGATE CLAUSE (Handover Trigger - For SPARC Mode Self-Monitoring)` (Proposal 2).
+        - Replaced `general.error_handling_protocol` with `EARLY RETURN CLAUSE (Enhanced Detail - V6)` (Task Specific).
+- **Affected Files:**
+    - `.roo/rules-*/.clinerules-*` (All mode rule files)
