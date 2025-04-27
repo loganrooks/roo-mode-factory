@@ -11,6 +11,495 @@
 
 ## Pseudocode Library
 <!-- Append new pseudocode blocks using the format below -->
+### Pseudocode: Philosopher Mode - Main Rule Flow
+- Created: 2025-04-15 22:41:00
+- Updated: 2025-04-15 22:41:00
+```pseudocode
+// --- Philosopher Mode .clinerules ---
+
+// Rule: On User Message Received
+ON event "user_message"
+    // TDD Anchor: Test intent classification (question, command, discourse, task)
+    // TDD Anchor: Test delegation trigger for research-requiring questions
+    // TDD Anchor: Test critique trigger for "critique this" command
+    // TDD Anchor: Test direct response for simple discourse
+
+    LOG "Philosopher received user message."
+    user_input = event.message
+
+    // 1. Load Context from Memory Bank
+    active_context = READ_MEMORY_BANK("activeContext.md")
+    global_context = READ_MEMORY_BANK("globalContext.md")
+    philosopher_memory = READ_MEMORY_BANK("mode-specific/philosopher.md")
+    // Potentially load keyFindings, documentSummaries if relevant
+
+    // 2. Analyze Intent & Context
+    intent = ANALYZE_INTENT(user_input, active_context)
+    current_methodology = GET_ACTIVE_METHODOLOGY(philosopher_memory, active_context)
+
+    // 3. Decision Logic & Action
+    IF intent == "RESEARCH_NEEDED" THEN
+        task_description = FORMULATE_RESEARCH_TASK(user_input, active_context, current_methodology)
+        UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Delegating research: " + task_description)
+        SWITCH_MODE("Researcher", reason="Research required", initial_message=task_description) // Pass task description
+    ELSE IF intent == "CRITIQUE_REQUESTED" OR SHOULD_INVOKE_CRITIQUE(user_input, active_context) THEN
+        context_to_critique = EXTRACT_CONTEXT_FOR_CRITIQUE(user_input, active_context)
+        UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Invoking critique.")
+        SWITCH_MODE("Critic", reason="Critique requested/needed", initial_message=context_to_critique) // Pass context
+    ELSE IF intent == "STUDY_TASK" THEN
+        // May need research first
+        IF REQUIRES_RESEARCH(user_input) THEN
+             task_description = FORMULATE_RESEARCH_TASK(user_input, active_context, current_methodology)
+             // Store original task details in activeContext for later use
+             UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Delegating research for study task: " + task_description)
+             SWITCH_MODE("Researcher", reason="Research required for study task", initial_message=task_description)
+        ELSE
+             response = GENERATE_STUDY_ASSISTANCE(user_input, active_context, current_methodology)
+             UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Completed study task.")
+             ATTEMPT_COMPLETION(result=response)
+        END IF
+    ELSE IF intent == "METHODOLOGY_CHANGE" THEN
+        new_methodology = EXTRACT_METHODOLOGY(user_input)
+        UPDATE_MEMORY_BANK("mode-specific/philosopher.md", "Set active methodology: " + new_methodology)
+        response = "Acknowledged. Applying " + new_methodology + " methodology."
+        ATTEMPT_COMPLETION(result=response)
+    ELSE // Assume Discourse
+        response = GENERATE_DISCOURSE_RESPONSE(user_input, active_context, current_methodology)
+        UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Engaging in discourse.")
+        ATTEMPT_COMPLETION(result=response)
+    END IF
+END ON
+
+// Rule: On Receiving Results from Researcher
+ON event "mode_result" WHERE source_mode == "Researcher"
+    // TDD Anchor: Test successful integration of research results into a user response
+    // TDD Anchor: Test updating keyFindings/documentSummaries in Memory Bank
+    // TDD Anchor: Test handling of research failure/empty results from Researcher
+
+    LOG "Philosopher received results from Researcher."
+    research_results = event.result
+    original_task = GET_ORIGINAL_TASK_FROM_CONTEXT("activeContext.md") // Retrieve task that triggered research
+
+    // 1. Load Context
+    active_context = READ_MEMORY_BANK("activeContext.md")
+    // Load other relevant MB sections
+
+    // 2. Process & Synthesize Results
+    IF research_results.success THEN
+        // Update Memory Bank with summaries/findings
+        UPDATE_MEMORY_BANK("documentSummaries.md", research_results.summary) // Example
+        UPDATE_MEMORY_BANK("keyFindings.md", research_results.findings)     // Example
+
+        // Synthesize response based on original task and results
+        IF original_task.type == "STUDY_TASK" THEN // Check type property
+             response = GENERATE_STUDY_ASSISTANCE(original_task.details, active_context, research_results)
+        ELSE // Assume original task was user question/discourse
+             response = SYNTHESIZE_RESPONSE(original_task.details, active_context, research_results)
+        END IF
+        UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Synthesized response using research results.")
+    ELSE
+        LOG error "Research failed: " + research_results.error
+        response = "I encountered an issue while researching that: " + research_results.error
+        UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Research delegation failed.")
+    END IF
+
+    // 3. Respond to User
+    ATTEMPT_COMPLETION(result=response)
+END ON
+
+// Rule: On Receiving Critique from Critic
+ON event "mode_result" WHERE source_mode == "Critic"
+    // TDD Anchor: Test generating a response acknowledging/addressing the critique
+    // TDD Anchor: Test triggering follow-up research based on critique
+    // TDD Anchor: Test updating Memory Bank with critique interaction
+
+    LOG "Philosopher received critique from Critic."
+    critique = event.result
+    active_context = READ_MEMORY_BANK("activeContext.md")
+
+    // 1. Analyze Critique & Formulate Response
+    response = FORMULATE_RESPONSE_TO_CRITIQUE(critique, active_context)
+    UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Responding to critique.")
+    UPDATE_MEMORY_BANK("mode-specific/philosopher.md", "Critique received: " + critique.summary) // Log interaction
+
+    // 2. Decide on Follow-up Action (Optional)
+    IF REQUIRES_FURTHER_RESEARCH(critique) THEN
+        task_description = FORMULATE_RESEARCH_TASK_FROM_CRITIQUE(critique, active_context)
+        UPDATE_MEMORY_BANK("activeContext.md", "[Philosopher] Delegating research based on critique: " + task_description)
+        SWITCH_MODE("Researcher", reason="Follow-up research after critique", initial_message=task_description)
+    ELSE
+        // 3. Respond to User (or continue internal processing)
+        ATTEMPT_COMPLETION(result=response)
+    END IF
+END ON
+
+// Helper Functions (Conceptual - Implementation depends on LLM/logic)
+FUNCTION ANALYZE_INTENT(input, context) // -> "RESEARCH_NEEDED", "CRITIQUE_REQUESTED", "STUDY_TASK", "METHODOLOGY_CHANGE", "DISCOURSE"
+FUNCTION FORMULATE_RESEARCH_TASK(input, context, methodology) // -> String (task description for Researcher)
+FUNCTION EXTRACT_CONTEXT_FOR_CRITIQUE(input, context) // -> String (text/statement to critique)
+FUNCTION SHOULD_INVOKE_CRITIQUE(input, context) // -> Boolean (logic for proactive critique)
+FUNCTION GENERATE_STUDY_ASSISTANCE(input, context, methodology_or_results) // -> String (e.g., essay outline)
+FUNCTION GENERATE_DISCOURSE_RESPONSE(input, context, methodology) // -> String (conversational response)
+FUNCTION SYNTHESIZE_RESPONSE(original_input, context, research_results) // -> String
+FUNCTION FORMULATE_RESPONSE_TO_CRITIQUE(critique, context) // -> String
+FUNCTION REQUIRES_FURTHER_RESEARCH(critique) // -> Boolean
+FUNCTION FORMULATE_RESEARCH_TASK_FROM_CRITIQUE(critique, context) // -> String
+FUNCTION GET_ACTIVE_METHODOLOGY(philosopher_memory, active_context) // -> String or Null
+FUNCTION EXTRACT_METHODOLOGY(input) // -> String
+FUNCTION GET_ORIGINAL_TASK_FROM_CONTEXT(active_context_content) // -> Object { type: "STUDY_TASK" | "USER_QUERY", details: String }
+// ... other helpers as needed
+```
+#### TDD Anchors:
+- Test intent classification (question, command, discourse, task)
+- Test delegation trigger for research-requiring questions
+- Test critique trigger for "critique this" command
+- Test direct response for simple discourse
+- Test successful integration of research results into a user response
+- Test updating keyFindings/documentSummaries in Memory Bank
+- Test handling of research failure/empty results from Researcher
+- Test generating a response acknowledging/addressing the critique
+- Test triggering follow-up research based on critique
+- Test updating Memory Bank with critique interaction
+
+### Pseudocode: Researcher Mode - Main Rule Flow
+- Created: 2025-04-15 22:41:00
+- Updated: 2025-04-15 22:41:00
+```pseudocode
+// --- Researcher Mode .clinerules ---
+
+// Rule: On Receiving Task from Philosopher
+ON event "user_message" // Assuming delegation uses the standard message mechanism
+    // TDD Anchor: Test parsing of task description from Philosopher
+    // TDD Anchor: Test source selection logic (RAG vs PhilAPI vs Web)
+    // TDD Anchor: Test query formulation for DB-MCP (embedding generation)
+    // TDD Anchor: Test query formulation for PhilAPI-MCP
+    // TDD Anchor: Test successful return of structured results to Philosopher
+
+    LOG "Researcher received task."
+    task_description = event.message
+
+    // 1. Load Context
+    active_context = READ_MEMORY_BANK("activeContext.md")
+    global_context = READ_MEMORY_BANK("globalContext.md")
+    // Load researchQueries, keyFindings for context augmentation
+
+    UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] Starting task: " + task_description)
+
+    // 2. Analyze Task & Select Source(s)
+    analyzed_task = ANALYZE_RESEARCH_TASK(task_description, active_context)
+    selected_sources = SELECT_SOURCES(analyzed_task) // -> List ["RAG", "PhilAPI", "Web"]
+
+    // 3. Execute Queries (Iterate through selected sources)
+    all_results = []
+    query_log = [] // For logging to researchQueries.md
+
+    IF "RAG" IN selected_sources THEN
+        rag_query_embedding = GENERATE_EMBEDDING(analyzed_task.query_text) // May involve local script/tool
+        query_log.append({ type: "RAG", query: analyzed_task.query_text, embedding_used: true })
+        TRY
+            db_mcp_result = USE_MCP_TOOL("DB-MCP", "query_similar_chunks", { query_embedding: rag_query_embedding, filters: analyzed_task.filters })
+            IF db_mcp_result.success THEN
+                processed_rag_results = PROCESS_RAG_RESULTS(db_mcp_result.chunks)
+                all_results.extend(processed_rag_results)
+            ELSE
+                LOG error "DB-MCP query failed: " + db_mcp_result.error
+                UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] DB-MCP query failed.")
+            END IF
+        CATCH McpError as e
+             LOG error "Error calling DB-MCP: " + e.message
+             UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] Error calling DB-MCP.")
+        END TRY
+    END IF
+
+    IF "PhilAPI" IN selected_sources THEN
+        api_query = FORMULATE_API_QUERY(analyzed_task)
+        query_log.append({ type: "PhilAPI", query: api_query.query, filters: api_query.filters }) // Log structured query
+        TRY
+            philapi_mcp_result = USE_MCP_TOOL("PhilAPI-MCP", "search_philpapers", { query: api_query.query, filters: api_query.filters })
+            IF philapi_mcp_result.success THEN
+                processed_api_results = PROCESS_PHILAPI_RESULTS(philapi_mcp_result.results)
+                all_results.extend(processed_api_results)
+            ELSE
+                LOG error "PhilAPI-MCP query failed: " + philapi_mcp_result.error
+                UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] PhilAPI-MCP query failed.")
+            END IF
+        CATCH McpError as e
+             LOG error "Error calling PhilAPI-MCP: " + e.message
+             UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] Error calling PhilAPI-MCP.")
+        END TRY
+    END IF
+
+    IF "Web" IN selected_sources THEN
+        web_query = FORMULATE_WEB_QUERY(analyzed_task)
+        query_log.append({ type: "Web", query: web_query })
+        TRY
+            // Option 1: Use Brave Search MCP
+            // web_mcp_result = USE_MCP_TOOL("brave-search", "brave_web_search", { query: web_query })
+            // Option 2: Use Fetcher MCP (requires identifying URLs first, maybe via search)
+            // urls_to_fetch = FIND_URLS_VIA_SEARCH(web_query) // Might use brave-search first just for URLs
+            // web_mcp_result = USE_MCP_TOOL("fetcher", "fetch_urls", { urls: urls_to_fetch })
+
+            // Assuming Brave Search for simplicity here:
+            web_mcp_result = USE_MCP_TOOL("brave-search", "brave_web_search", { query: web_query })
+
+            IF web_mcp_result.success THEN
+                 processed_web_results = PROCESS_WEB_RESULTS(web_mcp_result.results) // Process search snippets or fetched content
+                 all_results.extend(processed_web_results)
+            ELSE
+                 LOG error "Web search/fetch failed: " + web_mcp_result.error
+                 UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] Web search/fetch failed.")
+            END IF
+        CATCH McpError as e
+             LOG error "Error calling Web Search/Fetcher MCP: " + e.message
+             UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] Error calling Web Search/Fetcher MCP.")
+        END TRY
+    END IF
+
+    // 4. Log Queries
+    UPDATE_MEMORY_BANK("researchQueries.md", query_log) // Append new queries
+
+    // 5. Synthesize & Format Final Results
+    IF all_results IS NOT EMPTY THEN
+        final_summary, final_findings = SYNTHESIZE_ALL_RESULTS(all_results)
+        // Log summaries/findings
+        UPDATE_MEMORY_BANK("documentSummaries.md", final_summary) // Append
+        UPDATE_MEMORY_BANK("keyFindings.md", final_findings)     // Append
+        return_payload = { success: true, summary: final_summary, findings: final_findings, sources: EXTRACT_SOURCES(all_results) }
+        UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] Research complete. Found " + len(all_results) + " relevant items.")
+    ELSE
+        return_payload = { success: false, error: "No relevant information found.", summary: "", findings: [], sources: [] }
+        UPDATE_MEMORY_BANK("activeContext.md", "[Researcher] Research complete. No relevant information found.")
+    END IF
+
+    // 6. Return to Philosopher
+    SWITCH_MODE("Philosopher", reason="Returning research results", result=return_payload) // Pass results object
+END ON
+
+// Helper Functions (Conceptual)
+FUNCTION ANALYZE_RESEARCH_TASK(task_desc, context) // -> { query_text: String, filters: Object, type: String }
+FUNCTION SELECT_SOURCES(analyzed_task) // -> List ["RAG", "PhilAPI", "Web"]
+FUNCTION GENERATE_EMBEDDING(text) // -> Vector (May call external tool/script)
+FUNCTION PROCESS_RAG_RESULTS(chunks) // -> List[ProcessedResult]
+FUNCTION FORMULATE_API_QUERY(analyzed_task) // -> { query: String, filters: Object }
+FUNCTION PROCESS_PHILAPI_RESULTS(api_hits) // -> List[ProcessedResult]
+FUNCTION FORMULATE_WEB_QUERY(analyzed_task) // -> String
+FUNCTION PROCESS_WEB_RESULTS(search_hits_or_pages) // -> List[ProcessedResult]
+FUNCTION SYNTHESIZE_ALL_RESULTS(all_results) // -> String (summary), List[Finding]
+FUNCTION EXTRACT_SOURCES(all_results) // -> List[SourceLink]
+// ... other helpers
+```
+#### TDD Anchors:
+- Test parsing of task description from Philosopher
+- Test source selection logic (RAG vs PhilAPI vs Web)
+- Test query formulation for DB-MCP (embedding generation)
+- Test query formulation for PhilAPI-MCP
+- Test successful return of structured results to Philosopher
+
+### Pseudocode: Critic Mode - Main Rule Flow
+- Created: 2025-04-15 22:41:00
+- Updated: 2025-04-15 22:41:00
+```pseudocode
+// --- Critic Mode .clinerules ---
+
+// Rule: On Receiving Context to Critique from Philosopher
+ON event "user_message" // Assuming invocation uses standard message mechanism
+    // TDD Anchor: Test identification of assumptions in a sample text
+    // TDD Anchor: Test formulation of relevant critical questions
+    // TDD Anchor: Test delegation to Researcher if critique requires external info
+    // TDD Anchor: Test successful return of critique object to Philosopher
+
+    LOG "Critic received context for critique."
+    context_to_critique = event.message
+
+    // 1. Load Context & Critical Stance
+    active_context = READ_MEMORY_BANK("activeContext.md")
+    critic_memory = READ_MEMORY_BANK("mode-specific/critic.md")
+    // Potentially load keyFindings for counter-arguments
+
+    UPDATE_MEMORY_BANK("activeContext.md", "[Critic] Starting critique of context: " + SUBSTRING(context_to_critique, 0, 50))
+
+    // 2. Analyze Context & Identify Critique Points
+    critique_points = IDENTIFY_CRITIQUE_POINTS(context_to_critique, critic_memory, active_context) // -> List[Point(type, detail)]
+
+    // 3. Check if Research is Needed for Critique
+    IF REQUIRES_RESEARCH_FOR_CRITIQUE(critique_points) THEN
+        task_description = FORMULATE_CRITIQUE_RESEARCH_TASK(critique_points, context_to_critique)
+        // Store original context in activeContext for resuming later
+        UPDATE_MEMORY_BANK("activeContext.md", "[Critic] Delegating research for critique: " + task_description)
+        SWITCH_MODE("Researcher", reason="Research required for critique", initial_message=task_description)
+    ELSE
+        // 4. Formulate Critique Directly
+        critique_output = FORMULATE_CRITIQUE(critique_points, context_to_critique, critic_memory) // -> { summary: String, questions: List[String], observations: List[String] }
+
+        // 5. Log Critique
+        UPDATE_MEMORY_BANK("mode-specific/critic.md", { context: context_to_critique, critique: critique_output }) // Append
+        UPDATE_MEMORY_BANK("activeContext.md", "[Critic] Critique formulated.")
+
+        // 6. Return Critique to Philosopher
+        SWITCH_MODE("Philosopher", reason="Returning critique", result=critique_output)
+    END IF
+END ON
+
+// Rule: On Receiving Research Results (if delegated)
+ON event "mode_result" WHERE source_mode == "Researcher"
+    // TDD Anchor: Test integration of research results into the final critique
+    // TDD Anchor: Test resuming critique formulation after research
+
+    LOG "Critic received research results."
+    research_results = event.result
+    original_critique_context = GET_ORIGINAL_CRITIQUE_CONTEXT("activeContext.md") // Retrieve stored context
+
+    // 1. Load Context
+    active_context = READ_MEMORY_BANK("activeContext.md")
+    critic_memory = READ_MEMORY_BANK("mode-specific/critic.md")
+
+    // 2. Re-analyze and Formulate Final Critique using Research
+    IF research_results.success THEN
+        critique_points = IDENTIFY_CRITIQUE_POINTS(original_critique_context.context, critic_memory, active_context, research_results)
+        critique_output = FORMULATE_CRITIQUE(critique_points, original_critique_context.context, critic_memory)
+        UPDATE_MEMORY_BANK("activeContext.md", "[Critic] Critique formulated using research results.")
+    ELSE
+        LOG error "Research for critique failed: " + research_results.error
+        // Decide how to proceed: critique without research, or report failure?
+        critique_output = { summary: "Critique incomplete due to research failure.", error: research_results.error, questions: [], observations: [] }
+        UPDATE_MEMORY_BANK("activeContext.md", "[Critic] Research delegation for critique failed.")
+    END IF
+
+    // 3. Log Critique
+    UPDATE_MEMORY_BANK("mode-specific/critic.md", { context: original_critique_context.context, critique: critique_output }) // Append
+
+    // 4. Return Critique to Philosopher
+    SWITCH_MODE("Philosopher", reason="Returning critique (post-research)", result=critique_output)
+END ON
+
+
+// Helper Functions (Conceptual)
+FUNCTION IDENTIFY_CRITIQUE_POINTS(context, critic_mem, active_ctx, research_results=None) // -> List[CritiquePoint]
+FUNCTION REQUIRES_RESEARCH_FOR_CRITIQUE(critique_points) // -> Boolean
+FUNCTION FORMULATE_CRITIQUE_RESEARCH_TASK(critique_points, context) // -> String
+FUNCTION FORMULATE_CRITIQUE(critique_points, context, critic_mem) // -> CritiqueObject { summary, questions, observations }
+FUNCTION GET_ORIGINAL_CRITIQUE_CONTEXT(active_context_content) // -> Object { context: String }
+// ... other helpers
+```
+#### TDD Anchors:
+- Test identification of assumptions in a sample text
+- Test formulation of relevant critical questions
+- Test delegation to Researcher if critique requires external info
+- Test successful return of critique object to Philosopher
+- Test integration of research results into the final critique
+- Test resuming critique formulation after research
+
+### Pseudocode: Librarian Mode - Main Rule Flow (Shell Script Option)
+- Created: 2025-04-15 22:41:00
+- Updated: 2025-04-15 22:41:00
+```pseudocode
+// --- Librarian Mode .clinerules ---
+
+// Rule: On Receiving Ingestion Command from User
+ON event "user_message" // Assuming command format like "Librarian, ingest book ID 12345"
+    // TDD Anchor: Test parsing of book ID from command
+    // TDD Anchor: Test successful call to ZLibrary-MCP download_book_to_file
+    // TDD Anchor: Test successful construction and execution of chunk/embed script command
+    // TDD Anchor: Test handling of ZLibrary-MCP failure
+    // TDD Anchor: Test handling of script execution failure (non-zero exit code)
+    // TDD Anchor: Test logging of progress and errors to Memory Bank
+
+    LOG "Librarian received ingestion command."
+    command_text = event.message
+
+    // 1. Parse Command & Load Context
+    ingestion_params = PARSE_INGESTION_COMMAND(command_text) // -> { book_id: String, ... }
+    IF ingestion_params IS NULL THEN
+        ATTEMPT_COMPLETION(result="Invalid ingestion command. Please provide book ID.")
+        EXIT RULE
+    END IF
+
+    active_context = READ_MEMORY_BANK("activeContext.md")
+    librarian_memory = READ_MEMORY_BANK("mode-specific/librarian.md")
+
+    UPDATE_MEMORY_BANK("activeContext.md", "[Librarian] Starting ingestion for Book ID: " + ingestion_params.book_id)
+    UPDATE_MEMORY_BANK("mode-specific/librarian.md", "Ingestion Start: Book ID " + ingestion_params.book_id)
+
+    // 2. Step 1: Acquire & Process via ZLibrary-MCP
+    TRY
+        zlib_result = USE_MCP_TOOL("ZLibrary-MCP", "download_book_to_file", { id: ingestion_params.book_id, process_for_rag: true })
+    CATCH McpError as e
+        LOG error "Error calling ZLibrary-MCP: " + e.message
+        UPDATE_MEMORY_BANK("activeContext.md", "[Librarian] Failed: Error calling ZLibrary-MCP.")
+        UPDATE_MEMORY_BANK("mode-specific/librarian.md", "Ingestion Failed (ZLib Call): " + e.message)
+        ATTEMPT_COMPLETION(result="Failed to initiate download/processing via ZLibrary MCP: " + e.message)
+        EXIT RULE
+    END TRY
+
+    IF NOT zlib_result.success OR NOT zlib_result.processed_path THEN
+        error_msg = zlib_result.error || "Unknown error during ZLibrary download/processing."
+        LOG error "ZLibrary-MCP failed: " + error_msg
+        UPDATE_MEMORY_BANK("activeContext.md", "[Librarian] Failed: ZLibrary download/processing error.")
+        UPDATE_MEMORY_BANK("mode-specific/librarian.md", "Ingestion Failed (ZLib Process): " + error_msg)
+        ATTEMPT_COMPLETION(result="ZLibrary download/processing failed: " + error_msg)
+        EXIT RULE
+    END IF
+
+    processed_file_path = zlib_result.processed_path
+    doc_metadata = EXTRACT_METADATA_FROM_ZLIB_RESULT(zlib_result) // Get title, author etc. if available
+    UPDATE_MEMORY_BANK("mode-specific/librarian.md", "Acquisition/Processing Complete. Processed file: " + processed_file_path)
+
+    // 3. Step 2: Chunk, Embed, Store via Shell Script
+    // Construct script command (ensure paths are correct relative to workspace or absolute)
+    // Metadata needs to be passed securely, maybe via temp file or escaped JSON string
+    metadata_json_string = JSON_STRINGIFY(doc_metadata) // Needs escaping for shell
+    script_path = "scripts/chunk_embed_store.py" // Assumed path
+    command_to_run = "python " + script_path + " --input \"" + processed_file_path + "\" --doc-metadata '" + metadata_json_string + "'" // Example, needs robust path/arg handling
+
+    UPDATE_MEMORY_BANK("activeContext.md", "[Librarian] Executing chunk/embed/store script...")
+    TRY
+        script_result = EXECUTE_COMMAND(command_to_run, timeout=600) // Long timeout for processing
+    CATCH CommandError as e
+        LOG error "Error executing chunk/embed script: " + e.message
+        UPDATE_MEMORY_BANK("activeContext.md", "[Librarian] Failed: Error executing processing script.")
+        UPDATE_MEMORY_BANK("mode-specific/librarian.md", "Ingestion Failed (Script Execution): " + e.message)
+        ATTEMPT_COMPLETION(result="Failed to execute processing script: " + e.message)
+        EXIT RULE
+    END TRY
+
+    // Check script result (assuming script prints success/failure or uses exit codes)
+    // This part is highly dependent on the script's output contract.
+    IF script_result.exit_code != 0 OR CONTAINS_ERROR(script_result.stdout, script_result.stderr) THEN
+        error_msg = "Script failed. Exit code: " + script_result.exit_code + ". Output: " + script_result.stderr // Simplified
+        LOG error error_msg
+        UPDATE_MEMORY_BANK("activeContext.md", "[Librarian] Failed: Processing script reported failure.")
+        UPDATE_MEMORY_BANK("mode-specific/librarian.md", "Ingestion Failed (Script Logic): " + error_msg)
+        ATTEMPT_COMPLETION(result="Processing script failed: " + error_msg)
+        EXIT RULE
+    END IF
+
+    // 4. Report Success
+    // Extract details from script output if available (e.g., doc ID, chunk count)
+    final_doc_id = PARSE_SCRIPT_OUTPUT_FOR_DOC_ID(script_result.stdout)
+    final_chunk_count = PARSE_SCRIPT_OUTPUT_FOR_CHUNK_COUNT(script_result.stdout)
+
+    success_msg = "Ingestion successful for Book ID " + ingestion_params.book_id + "."
+    IF final_doc_id THEN success_msg += " DB Doc ID: " + final_doc_id
+    IF final_chunk_count THEN success_msg += " Chunks created: " + final_chunk_count
+
+    LOG success_msg
+    UPDATE_MEMORY_BANK("activeContext.md", "[Librarian] Ingestion successful for Book ID: " + ingestion_params.book_id)
+    UPDATE_MEMORY_BANK("mode-specific/librarian.md", "Ingestion Success: Book ID " + ingestion_params.book_id + ". DB ID: " + (final_doc_id || "N/A"))
+    ATTEMPT_COMPLETION(result=success_msg)
+
+END ON
+
+// Helper Functions (Conceptual)
+FUNCTION PARSE_INGESTION_COMMAND(text) // -> { book_id: String } or Null
+FUNCTION EXTRACT_METADATA_FROM_ZLIB_RESULT(zlib_result) // -> Object { title, author, ... }
+FUNCTION JSON_STRINGIFY(object) // -> String (properly escaped for shell)
+FUNCTION CONTAINS_ERROR(stdout, stderr) // -> Boolean (checks for error keywords)
+FUNCTION PARSE_SCRIPT_OUTPUT_FOR_DOC_ID(stdout) // -> String or Null
+FUNCTION PARSE_SCRIPT_OUTPUT_FOR_CHUNK_COUNT(stdout) // -> String or Null
+// ... other helpers
+```
+
+
 ### Pseudocode: RAG Ingestion Pipeline - Main Function
 - Created: 2025-04-10 13:04:52
 - Updated: 2025-04-10 13:04:52
