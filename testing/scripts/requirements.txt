@@ -1,0 +1,5 @@
+pytest
+pytest-mock
+openai
+tiktoken
+python-dotenv
